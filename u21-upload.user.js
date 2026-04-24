@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BuzzerBeater U21 Upload
 // @namespace    http://tampermonkey.net/
-// @version      1.3
+// @version      1.4
 // @description  Sidebar für Schweizer Manager zum Upload aktueller Skills ins U21 Player Sheet inkl. Trainingsvorschlag
 // @match        https://www.buzzerbeater.com/player/*
 // @match        https://buzzerbeater.com/player/*
@@ -283,6 +283,10 @@ function getManagerName() {
         return ['schweiz', 'switzerland', 'suisse', 'svizzera', 'svizra']
             .includes(String(countryName || '').toLowerCase());
     }
+    function isEligibleU21(country, age) {
+    const ageNum = parseInt(age, 10);
+    return isSwissCountryName(country) && !isNaN(ageNum) && ageNum <= 21;
+}
 
     function getPlayerLink() {
         return window.location.href.split('#')[0];
@@ -928,20 +932,26 @@ evaluatedTargets.forEach(evaluation => {
         const age = getPlayerAge() || '?';
         const playerLink = getPlayerLink() || '';
         const isSwiss = isSwissCountryName(country);
+const isEligible = isEligibleU21(country, age);
 
         const uploadBtn = createButton({
             text: t('uploadButton'),
             color: '#1565c0',
             onClick: uploadToDatabase,
-            disabled: !isSwiss,
+            disabled: !isEligible,
             title: t('uploadButton')
         });
 
         actionsWrap.appendChild(uploadBtn);
 
-        const scoutData = await fetchScout(playerName, age, playerLink);
-        const scout = scoutData.scout;
-        const mailLink = scoutData.mailLink;
+       let scout = '-';
+let mailLink = '';
+
+if (isEligible) {
+    const scoutData = await fetchScout(playerName, age, playerLink);
+    scout = scoutData.scout;
+    mailLink = scoutData.mailLink;
+}
 
         noteWrap.innerHTML = `
             <div>${t('playerDetected')}</div>
@@ -967,7 +977,9 @@ ${
             <span id="bb-upload-last-update">${t('lastUpdateLoading')}</span>
         `;
 
-        const lastUpdate = await fetchLastUpdate(playerName, age, playerLink);
+       const lastUpdate = isEligible
+    ? await fetchLastUpdate(playerName, age, playerLink)
+    : '';
         const updateLine = document.getElementById('bb-upload-last-update');
 
         if (updateLine) {
@@ -983,8 +995,19 @@ ${
             }
         }
 
-        const trainingData = await fetchTrainingPlan(playerName, age, playerLink);
-        renderTrainingPlan(trainingData);
+        if (isEligible) {
+    const trainingData = await fetchTrainingPlan(playerName, age, playerLink);
+    renderTrainingPlan(trainingData);
+} else {
+    const wrap = document.getElementById('bb-training-plan-content');
+    if (wrap) {
+        wrap.innerHTML = `
+            <div style="color:#888;">
+                Trainingsvorschlag nur verfügbar für Schweizer Spieler bis 21 Jahre.
+            </div>
+        `;
+    }
+}
 
         actionsWrap.dataset.ready = '1';
     }
