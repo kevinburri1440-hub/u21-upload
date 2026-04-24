@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BuzzerBeater U21 Upload
 // @namespace    http://tampermonkey.net/
-// @version      1.2
+// @version      1.3
 // @description  Sidebar für Schweizer Manager zum Upload aktueller Skills ins U21 Player Sheet inkl. Trainingsvorschlag
 // @match        https://www.buzzerbeater.com/player/*
 // @match        https://buzzerbeater.com/player/*
@@ -238,7 +238,17 @@
             getBodyText().match(/Età\s*:\s*(\d+)/i);
         return match ? String(parseInt(match[1], 10)) : '';
     }
+function getManagerName() {
+    const text = getBodyText();
 
+    const match =
+        text.match(/Besitzer:\s*([^\n]+)/i) ||
+        text.match(/Owner:\s*([^\n]+)/i) ||
+        text.match(/Propriétaire\s*:\s*([^\n]+)/i) ||
+        text.match(/Proprietario\s*:\s*([^\n]+)/i);
+
+    return match ? String(match[1]).trim() : '';
+}
     function getCountryName() {
         const flag = document.getElementById('cphContent_nationalFlag');
         if (flag) {
@@ -434,6 +444,7 @@ function evaluateTrainingTarget(targetText, currentSkills) {
         const age = getPlayerAge();
         const link = getPlayerLink();
         const country = getCountryName();
+        const managerName = getManagerName();
         const skills = collectSkills();
 
         if (!name) throw new Error('Spielername nicht gefunden.');
@@ -443,7 +454,7 @@ function evaluateTrainingTarget(targetText, currentSkills) {
             throw new Error('Mindestens ein Skill fehlt.');
         }
 
-        return { name, age, link, country, skills };
+        return { name, age, link, country, managerName, skills };
     }
 
     function sendJson(url, payload) {
