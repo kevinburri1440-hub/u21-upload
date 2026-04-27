@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         BuzzerBeater U21 Tools Combined Secure
+// @name         BuzzerBeater U21 Tools Combined Secure Managers
 // @namespace    http://tampermonkey.net/
-// @version      6.0
+// @version      6.1
 // @description  Sichere rollenbasierte U21 Suite: Rolle wird serverseitig per Token geprüft
 // @match        https://www.buzzerbeater.com/player/*
 // @match        https://buzzerbeater.com/player/*
@@ -20,6 +20,7 @@
         // NEU: Role Access WebApp + persönlicher Token
         accessWebAppUrl: 'https://script.google.com/macros/s/AKfycbyJCLWtdHI2gOrFXbhWOXFAMhQwrv9C2Y1n4eV19kw7Z72VM2Tq39T7C21FO91J1INBtg/exec',
         accessToken: '',
+        accessOwner: '',
 
         uploadWebAppUrl: 'https://script.google.com/macros/s/AKfycbxP5ibVZZVnnkvP_V_ctkenN0xiGRx-Q1cZ_aVczRU6_KnJgQjnUK2bfcCCdwKdhEVJ/exec',
         trainingWebAppUrl: 'https://script.google.com/macros/s/AKfycbxU_WJKLnQxzOS0C6F085LJUhI9fy_rN9yC-gfQh9SXzPbV3lKoxlw2RELFPDJc39zl/exec',
@@ -151,25 +152,39 @@
         });
     }
 
-    async function loadAccess() {
-        if (!CONFIG.accessWebAppUrl || CONFIG.accessWebAppUrl.includes('DEINE_ROLE_WEBAPP_URL')) return;
-        const teamName = getTeamName();
-        const data = await gmPostJson(CONFIG.accessWebAppUrl, { action: 'getAccess', teamName, accessToken: CONFIG.accessToken || '' }, { rejectOnError: false });
-        if (!data?.ok || !data.features) return;
-        CURRENT_ROLE = data.role || 'manager';
-        ACCESS_TRUSTED = !!data.trusted;
-        FEATURES = {
-            upload: !!data.features.upload,
-            scoutInfo: !!data.features.scoutInfo,
-            lastUpdate: !!data.features.lastUpdate,
-            trainingSuggestion: !!data.features.trainingSuggestion,
-            exportOtherCountries: !!data.features.exportOtherCountries,
-            messages: !!data.features.messages,
-            scoutingWorkflow: !!data.features.scoutingWorkflow,
-            managerLanguage: !!data.features.managerLanguage
-        };
-    }
+   async function loadAccess() {
+    if (!CONFIG.accessWebAppUrl || CONFIG.accessWebAppUrl.includes('DEINE_ROLE_WEBAPP_URL')) return;
 
+    const teamName = CONFIG.accessOwner || getTeamName();
+
+    const data = await gmPostJson(CONFIG.accessWebAppUrl, {
+        action: 'getAccess',
+        teamName,
+        accessToken: CONFIG.accessToken || ''
+    }, { rejectOnError: false });
+       console.log('[U21 ACCESS CHECK]', {
+    teamName,
+    accessOwner: CONFIG.accessOwner,
+    tokenUsed: CONFIG.accessToken,
+    response: data
+});
+
+    if (!data?.ok || !data.features) return;
+
+    CURRENT_ROLE = data.role || 'manager';
+    ACCESS_TRUSTED = !!data.trusted;
+
+    FEATURES = {
+        upload: !!data.features.upload,
+        scoutInfo: !!data.features.scoutInfo,
+        lastUpdate: !!data.features.lastUpdate,
+        trainingSuggestion: !!data.features.trainingSuggestion,
+        exportOtherCountries: !!data.features.exportOtherCountries,
+        messages: !!data.features.messages,
+        scoutingWorkflow: !!data.features.scoutingWorkflow,
+        managerLanguage: !!data.features.managerLanguage
+    };
+}
     function getPlayerName() {
         const selectors = ['.boxheader a[href*="/player/"]', '#cphContent_lblPlayerName a', '#cphContent_playerName a'];
         for (const selector of selectors) { const name = cleanPlayerName(document.querySelector(selector)?.textContent); if (name) return name; }
@@ -736,7 +751,7 @@
             }
         }
 
-        if (FEATURES.trainingSuggestion) {
+               if (FEATURES.trainingSuggestion) {
             const wrap = document.getElementById('bb-training-plan-content');
 
             let scoutData = null;
@@ -746,15 +761,12 @@
 
             if (!eligible) {
                 if (wrap) wrap.innerHTML = `<div style="color:#888;">${trainingText().onlyU21}</div>`;
-            } else if (!skillsVisible) {
-                if (wrap) wrap.innerHTML = `<div style="color:#888;">${uploadText('noSkills')}</div>`;
             } else {
                 const trainingData = await fetchTrainingPlan(playerName, age, playerLink);
                 renderTrainingPlan(trainingData, scoutData);
             }
         }
     }
-
     function initPlayerPage() { setTimeout(async () => { await loadAccess(); await buildSidebarContent(); resumeScoutingWorkflow(); }, CONFIG.initDelayMs); }
     function initMailPage() { setTimeout(fillComposerFromStoredPayload, CONFIG.initDelayMs); }
 
