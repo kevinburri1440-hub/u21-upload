@@ -31,7 +31,7 @@
         scoutingStorageKey: 'bb_u21_combined_scouting_v60',
         messageStorageKey: 'bb_u21_combined_message_v60',
         requestTimeoutMs: 30000,
-        initDelayMs: 800,
+        initDelayMs: 300,
         trainingPanelWidth: 430
     };
 
@@ -185,6 +185,13 @@
         managerLanguage: !!data.features.managerLanguage
     };
 }
+    function getPlayerId() {
+    const hidden = document.getElementById('cphContent_hdnPlayerID');
+    if (hidden && hidden.value) return String(hidden.value).trim();
+
+    const match = String(window.location.href).match(/playerid=(\d+)/i);
+    return match ? match[1] : '';
+}
     function getPlayerName() {
         const selectors = ['.boxheader a[href*="/player/"]', '#cphContent_lblPlayerName a', '#cphContent_playerName a'];
         for (const selector of selectors) { const name = cleanPlayerName(document.querySelector(selector)?.textContent); if (name) return name; }
@@ -248,8 +255,31 @@
     function hasVisibleSkills() { try { const skills = collectSkills(); return Array.isArray(skills) && skills.length === SKILL_ORDER.length && skills.every(v => String(v || '').trim() !== ''); } catch { return false; } }
     function getCurrentSkillMap() { const skills = collectSkills(); return Object.fromEntries(SKILL_ORDER.map((key, index) => [key, toInt(skills[index])])); }
 
-    function buildUploadPayload() { const payload = { name: getPlayerName(), age: getPlayerAge(), link: getPlayerLink(), country: getCountryName(), managerName: getManagerName(), skills: collectSkills(), accessToken: CONFIG.accessToken || '' }; validatePayload(payload); return payload; }
-    function buildScoutingPayload() { const payload = { name: getPlayerName(), age: getPlayerAge(), skills: collectSkills(), accessToken: CONFIG.accessToken || '' }; validatePayload(payload, false); return payload; }
+   function buildUploadPayload() {
+    const payload = {
+        playerId: getPlayerId(),
+        name: getPlayerName(),
+        age: getPlayerAge(),
+        link: getPlayerLink(),
+        country: getCountryName(),
+        managerName: getManagerName(),
+        skills: collectSkills(),
+        accessToken: CONFIG.accessToken || ''
+    };
+    validatePayload(payload);
+    return payload;
+}
+    function buildScoutingPayload() {
+    const payload = {
+        playerId: getPlayerId(),
+        name: getPlayerName(),
+        age: getPlayerAge(),
+        skills: collectSkills(),
+        accessToken: CONFIG.accessToken || ''
+    };
+    validatePayload(payload, false);
+    return payload;
+}
     function buildExportPayload() { const payload = { name: getPlayerName(), age: getPlayerAge(), link: getPlayerLink(), country: getCountryName(), skills: collectSkills(), accessToken: CONFIG.accessToken || '' }; validatePayload(payload); return payload; }
 
     function validatePayload(payload, needsCountry = true) {
@@ -308,7 +338,7 @@
     function clickRecruitYesButton() { return clickVisibleButtonBySelectors(['#cphContent_btnNTRecruitYes2', 'input[id*="btnNTRecruitYes"][value="Ja"]', 'input[name*="btnNTRecruitYes"][value="Ja"]'], 'Ja'); }
     function clickDismissYesButton() { return clickVisibleButtonBySelectors(['#cphContent_btnDismissYes2', 'input[id*="btnDismissYes"][value="Ja"]', 'input[name*="btnDismissYes"][value="Ja"]'], 'Ja'); }
 
-    function waitForAndClick(clickFn, maxAttempts = 50, interval = 300) {
+    function waitForAndClick(clickFn, maxAttempts = 35, interval = 120) {
         return new Promise((resolve, reject) => {
             let attempts = 0;
             const timer = setInterval(() => {
@@ -704,8 +734,12 @@
                     color: '#d4a017',
                     textColor: '#222',
                     onClick: exportPlayer,
-                    disabled: !skillsVisible,
-                    title: !skillsVisible ? uploadText('noSkills') : 'Exportiert den Spieler in den Google-Sheet-Tab other countries'
+                    disabled: !skillsVisible || getPlayerAgeNumber() === null || getPlayerAgeNumber() > 21,
+                   title: !skillsVisible
+    ? uploadText('noSkills')
+    : getPlayerAgeNumber() > 21
+        ? 'Nur für Spieler bis 21 Jahre'
+        : 'Exportiert den Spieler in den Google-Sheet-Tab other countries'
                 }));
             }
         }
@@ -751,25 +785,70 @@
             }
         }
 
-               if (FEATURES.trainingSuggestion) {
-            const wrap = document.getElementById('bb-training-plan-content');
+              if (FEATURES.trainingSuggestion) {
+    const wrap = document.getElementById('bb-training-plan-content');
 
-            let scoutData = null;
-            if (FEATURES.scoutInfo && eligible) {
-                scoutData = await fetchScout(playerName, age, playerLink);
-            }
+    (async () => {
+        let scoutData = null;
 
-            if (!eligible) {
-                if (wrap) wrap.innerHTML = `<div style="color:#888;">${trainingText().onlyU21}</div>`;
-            } else {
-                const trainingData = await fetchTrainingPlan(playerName, age, playerLink);
-                renderTrainingPlan(trainingData, scoutData);
-            }
+        if (FEATURES.scoutInfo && eligible) {
+            scoutData = await fetchScout(playerName, age, playerLink);
         }
+
+        if (!eligible) {
+            if (wrap) wrap.innerHTML = `<div style="color:#888;">${trainingText().onlyU21}</div>`;
+            return;
+        }
+
+        const trainingData = await fetchTrainingPlan(playerName, age, playerLink);
+        renderTrainingPlan(trainingData, scoutData);
+    })();
+}
     }
-    function initPlayerPage() { setTimeout(async () => { await loadAccess(); await buildSidebarContent(); resumeScoutingWorkflow(); }, CONFIG.initDelayMs); }
+   function initPlayerPage() {
+    setTimeout(async () => {
+        const state = getWorkflowState();
+
+        // Sidebar sofort anzeigen
+        await buildSidebarContent();
+
+        // Wenn Workflow aktiv ist: direkt weiterarbeiten
+        if (state?.active) {
+            FEATURES.scoutingWorkflow = true;
+            resumeScoutingWorkflow();
+        }
+
+        // Access im Hintergrund laden
+        await loadAccess();
+
+        // Sidebar mit echten Rechten neu laden
+        const oldBox = document.getElementById('bb-u21-combined-shell');
+        if (oldBox) oldBox.remove();
+
+        await buildSidebarContent();
+
+        // Nur starten, falls nicht schon vorher gestartet
+        if (!state?.active) {
+            resumeScoutingWorkflow();
+        }
+    }, CONFIG.initDelayMs);
+}
     function initMailPage() { setTimeout(fillComposerFromStoredPayload, CONFIG.initDelayMs); }
 
-    if (isPlayerPage()) window.addEventListener('load', initPlayerPage);
-    if (isMailCreatePage()) window.addEventListener('load', initMailPage);
+    if (isPlayerPage()) {
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initPlayerPage);
+    } else {
+        initPlayerPage();
+    }
+}
+
+if (isMailCreatePage()) {
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initMailPage);
+    } else {
+        initMailPage();
+    }
+}
+
 })();
