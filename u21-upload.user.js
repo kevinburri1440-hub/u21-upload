@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BuzzerBeater U21 Tools Combined Secure Managers
 // @namespace    http://tampermonkey.net/
-// @version      6.2
+// @version      6.3
 // @description  Rollenbasierte U21 Suite ohne Scouting Workflow, mit Sell Button und Benachrichtigungsbox
 // @match        https://www.buzzerbeater.com/player/*
 // @match        https://buzzerbeater.com/player/*
@@ -309,6 +309,14 @@
         return match ? text(match[1]) : '';
     }
 
+    function hasActiveAuction() {
+    const bidButton =
+        document.getElementById('cphContent_btnBid') ||
+        document.querySelector('input[id*="btnBid"]') ||
+        document.querySelector('input[name*="btnBid"]');
+
+    return !!bidButton;
+}
     function getManagerName() {
         const body = getBodyText();
         const match = body.match(/Besitzer:\s*([^\n]+)/i) || body.match(/Owner:\s*([^\n]+)/i) || body.match(/Propriétaire\s*:\s*([^\n]+)/i) || body.match(/Proprietario\s*:\s*([^\n]+)/i);
@@ -848,7 +856,7 @@
         const teamName = getTeamName();
         const eligible = isEligibleU21(country, age);
         const skillsVisible = hasVisibleSkills();
-        const auctionEnds = getAuctionEnds();
+        const auctionEnds = hasActiveAuction();
 
         infoWrap.innerHTML = `<div>${uploadText('playerDetected')}</div><div><b>${escapeHtml(playerName)}</b> &nbsp;|&nbsp; ${escapeHtml(age)}</div><div style="margin-bottom:4px;"><b>${escapeHtml(country)}</b>${getCountryFlagHtml()}</div>${FEATURES.managerLanguage ? `<div id="bb-manager-language-line" style="margin-bottom:6px;">${uploadText('languageLoading')}</div>` : ''}${FEATURES.lastUpdate ? `<div id="bb-main-last-update">${uploadText('lastUpdateLoading')}</div>` : ''}${!skillsVisible ? `<div style="margin-top:6px;color:#888;font-weight:600;">${uploadText('noSkills')}</div>` : ''}${!eligible && (FEATURES.upload || FEATURES.trainingSuggestion) ? `<div style="margin-top:8px;color:#c62828;font-weight:bold;">${uploadText('onlySwiss')}</div>` : ''}`;
         infoWrap.dataset.ready = '1';
