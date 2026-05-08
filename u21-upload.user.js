@@ -27,7 +27,7 @@
         managerLanguageWebAppUrl: 'https://script.google.com/macros/s/AKfycbx9q49TTyVIUU6Cp5zfqsSLmbcSIVmPigULUseS7qDRyL6T0nkzdGLdhMLW2_cZ0z-A/exec',
 
         messageStorageKey: 'bb_u21_combined_message_v62',
-        requestTimeoutMs: 30000,
+      requestTimeoutMs: 90000,
         initDelayMs: 300,
         trainingPanelWidth: 430
     };
@@ -200,6 +200,71 @@
     function uploadText(key) { return UPLOAD_TEXTS[uiLang()]?.[key] || UPLOAD_TEXTS.en[key] || key; }
     function trainingText() { return TRAINING_TEXTS[uiLang()] || TRAINING_TEXTS.en; }
 
+    function showLoadingOverlay(message = 'U21 Daten werden geladen ...') {
+    let box = document.getElementById('bb-u21-loading-overlay');
+
+    if (box) return;
+
+    box = document.createElement('div');
+    box.id = 'bb-u21-loading-overlay';
+
+    box.innerHTML = `
+        <div style="display:flex;align-items:center;gap:10px;">
+            <div class="bb-u21-spinner"></div>
+            <div>
+                <div style="font-weight:bold;">${message}</div>
+                <div style="font-size:11px;color:#666;margin-top:2px;">
+                   Spielererkennung, Ranking & Upload werden verarbeitet
+                </div>
+            </div>
+        </div>
+    `;
+
+    Object.assign(box.style, {
+        position: 'fixed',
+        top: '18px',
+        right: '18px',
+        zIndex: '999999',
+        background: '#fff',
+        border: '1px solid #ccc',
+        borderLeft: '4px solid #1565c0',
+        borderRadius: '8px',
+        padding: '12px 14px',
+        boxShadow: '0 3px 12px rgba(0,0,0,0.25)',
+        fontSize: '13px',
+        color: '#222',
+        minWidth: '260px'
+    });
+
+    const style = document.createElement('style');
+    style.id = 'bb-u21-spinner-style';
+
+    style.textContent = `
+        .bb-u21-spinner {
+            width:18px;
+            height:18px;
+            border:3px solid #d0d0d0;
+            border-top:3px solid #1565c0;
+            border-radius:50%;
+            animation: bbU21Spin 0.8s linear infinite;
+        }
+
+        @keyframes bbU21Spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+    `;
+
+    if (!document.getElementById('bb-u21-spinner-style')) {
+        document.head.appendChild(style);
+    }
+
+    document.body.appendChild(box);
+}
+
+function hideLoadingOverlay() {
+    document.getElementById('bb-u21-loading-overlay')?.remove();
+}
     function showToast(message, isError = false) {
         const toast = document.createElement('div');
         toast.textContent = message;
@@ -479,15 +544,29 @@ async function fetchMainLastUpdate(playerName, playerAge, playerLink, countryNam
     }
 
     async function uploadToDatabase() {
-        try {
-            const payload = buildUploadPayload();
-            if (!isEligibleU21(payload.country, payload.age)) { showToast(uploadText('uploadOnlySwiss'), true); return; }
-            showToast(`${uploadText('uploadToast')} ${payload.name} (${payload.age})`);
-            const result = await gmPostJson(CONFIG.uploadWebAppUrl, payload);
-            showToast(`${result.action === 'updated' ? uploadText('uploadSuccessUpdated') : uploadText('uploadSuccessInserted')} ${payload.name}`);
-            updateLineToToday('bb-main-last-update', uploadText('lastUpdate'));
-        } catch (err) { alert(uploadText('uploadFailed') + ' ' + (err.message || err)); }
+    try {
+        const payload = buildUploadPayload();
+
+        if (!isEligibleU21(payload.country, payload.age)) {
+            showToast(uploadText('uploadOnlySwiss'), true);
+            return;
+        }
+
+        showLoadingOverlay('U21 Upload läuft ...');
+        showToast(`${uploadText('uploadToast')} ${payload.name} (${payload.age})`);
+
+        const result = await gmPostJson(CONFIG.uploadWebAppUrl, payload);
+
+        showToast(`${result.action === 'updated' ? uploadText('uploadSuccessUpdated') : uploadText('uploadSuccessInserted')} ${payload.name}`);
+
+        await refreshMainLastUpdateLine(payload.name, payload.age, payload.link, payload.country);
+
+    } catch (err) {
+        alert(uploadText('uploadFailed') + ' ' + (err.message || err));
+    } finally {
+        hideLoadingOverlay();
     }
+}
 
     async function sendSellNotification() {
         try {
@@ -1000,8 +1079,14 @@ async function fetchMainLastUpdate(playerName, playerAge, playerLink, countryNam
             });
         }
 
-       if (FEATURES.lastUpdate) {
-    await refreshMainLastUpdateLine(playerName, age, playerLink, country);
+      if (FEATURES.lastUpdate) {
+    showLoadingOverlay('U21 Ranking wird geladen ...');
+
+    try {
+        await refreshMainLastUpdateLine(playerName, age, playerLink, country);
+    } finally {
+        hideLoadingOverlay();
+    }
 }
 
         if (FEATURES.trainingSuggestion) {
@@ -1021,15 +1106,18 @@ async function fetchMainLastUpdate(playerName, playerAge, playerLink, countryNam
         }
     }
 
-    async function initPlayerPage() {
-        setTimeout(async () => {
-            await buildSidebarContent();
-            await loadAccess();
-            const oldBox = document.getElementById('bb-u21-combined-shell');
-            if (oldBox) oldBox.remove();
-            await buildSidebarContent();
-        }, CONFIG.initDelayMs);
-    }
+   async function initPlayerPage() {
+    setTimeout(async () => {
+        await buildSidebarContent();
+
+        await loadAccess();
+
+        const oldBox = document.getElementById('bb-u21-combined-shell');
+        if (oldBox) oldBox.remove();
+
+        await buildSidebarContent();
+    }, CONFIG.initDelayMs);
+}
 
     function initMailPage() { setTimeout(fillComposerFromStoredPayload, CONFIG.initDelayMs); }
 
