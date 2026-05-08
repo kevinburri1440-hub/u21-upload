@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BuzzerBeater U21 Tools Combined Secure Managers
 // @namespace    http://tampermonkey.net/
-// @version      6.3
+// @version      6.4
 // @description  Rollenbasierte U21 Suite ohne Scouting Workflow, mit Sell Button und Benachrichtigungsbox
 // @match        https://www.buzzerbeater.com/player/*
 // @match        https://buzzerbeater.com/player/*
@@ -441,9 +441,35 @@
     }
 
     async function fetchUploadData(action, playerName, playerAge, playerLink) { return gmPostJson(CONFIG.uploadWebAppUrl, { action, name: playerName, age: playerAge, link: playerLink, accessToken: CONFIG.accessToken || '' }, { rejectOnError: false }); }
-    async function fetchSwissLastUpdate(playerName, playerAge, playerLink) { const data = await fetchUploadData('getSwissLastUpdate', playerName, playerAge, playerLink); return data?.ok ? text(data.lastUpdate) : ''; }
-    async function fetchOtherCountryLastUpdate(playerName, playerAge, playerLink) { const data = await gmPostJson(CONFIG.exportWebAppUrl, { action: 'getOtherCountryLastUpdate', name: playerName, age: playerAge, link: playerLink, accessToken: CONFIG.accessToken || '' }, { rejectOnError: false }); return data?.ok ? text(data.lastUpdate) : ''; }
-    async function fetchMainLastUpdate(playerName, playerAge, playerLink, countryName) { return isSwissCountryName(countryName) ? fetchSwissLastUpdate(playerName, playerAge, playerLink) : fetchOtherCountryLastUpdate(playerName, playerAge, playerLink); }
+   async function fetchSwissLastUpdate(playerName, playerAge, playerLink) {
+    const data = await fetchUploadData('getSwissLastUpdate', playerName, playerAge, playerLink);
+
+    return {
+        lastUpdate: data?.ok ? text(data.lastUpdate) : '',
+        rankings: data?.ok && data.rankings ? data.rankings : null
+    };
+}
+
+async function fetchOtherCountryLastUpdate(playerName, playerAge, playerLink) {
+    const data = await gmPostJson(CONFIG.exportWebAppUrl, {
+        action: 'getOtherCountryLastUpdate',
+        name: playerName,
+        age: playerAge,
+        link: playerLink,
+        accessToken: CONFIG.accessToken || ''
+    }, { rejectOnError: false });
+
+    return {
+        lastUpdate: data?.ok ? text(data.lastUpdate) : '',
+        rankings: null
+    };
+}
+
+async function fetchMainLastUpdate(playerName, playerAge, playerLink, countryName) {
+    return isSwissCountryName(countryName)
+        ? fetchSwissLastUpdate(playerName, playerAge, playerLink)
+        : fetchOtherCountryLastUpdate(playerName, playerAge, playerLink);
+}
     async function fetchScout(playerName, playerAge, playerLink) { const data = await fetchUploadData('getScout', playerName, playerAge, playerLink); return { scout: data?.scout || 'Brausetablette', mailLink: data?.mailLink || '' }; }
     async function fetchManagerLanguage(teamName) { const data = await gmPostJson(CONFIG.accessWebAppUrl || CONFIG.managerLanguageWebAppUrl, { action: 'getManagerLanguage', teamName, accessToken: CONFIG.accessToken || '' }, { rejectOnError: false }); return data?.ok && data.language ? text(data.language) : 'unknown'; }
 
@@ -477,7 +503,7 @@
             showToast(`Export: ${payload.name} (${payload.country})`);
             const result = await gmPostJson(CONFIG.exportWebAppUrl, payload);
             showToast(`✅ ${result.action === 'inserted' ? 'neu gespeichert' : 'aktualisiert'}: ${payload.name}`);
-            updateLineToToday('bb-main-last-update', uploadText('lastUpdate'));
+            await refreshMainLastUpdateLine(payload.name, payload.age, payload.link, payload.country);
         } catch (err) { alert(uploadText('exportFailed') + ' ' + (err.message || err)); }
     }
 
@@ -814,6 +840,58 @@
         return section;
     }
 
+    function buildRankingHtml(rankings) {
+    if (!rankings || !rankings.age || !rankings.total) return '';
+
+    const positions = [
+        { key: 'PG', trendKey: 'PGTrend' },
+        { key: 'SG', trendKey: 'SGTrend' },
+        { key: 'SF', trendKey: 'SFTrend' },
+        { key: 'PF', trendKey: 'PFTrend' },
+        { key: 'C', trendKey: 'CTrend' }
+    ];
+
+    function trendHtml(trend) {
+        if (trend === 'up') {
+            return `<span title="Ranking verbessert" style="color:#2e7d32;font-weight:bold;margin-left:6px;">▲</span>`;
+        }
+
+        if (trend === 'down') {
+            return `<span title="Ranking verschlechtert" style="color:#c62828;font-weight:bold;margin-left:6px;">▼</span>`;
+        }
+
+        if (trend === 'same') {
+            return `<span title="Ranking unverändert" style="color:#f9a825;font-weight:bold;margin-left:6px;">=</span>`;
+        }
+
+        return `<span style="display:inline-block;width:12px;margin-left:6px;"></span>`;
+    }
+
+    const rows = positions.map(pos => {
+        const rank = rankings[pos.key];
+        const value = rank ? `#${rank}/${rankings.total}` : '-';
+        const trend = rankings[pos.trendKey] || '';
+
+        return `
+            <div style="display:flex;justify-content:space-between;gap:8px;margin:1px 0;">
+                <span>${pos.key}</span>
+                <span>
+                    <b>${escapeHtml(value)}</b>
+                    ${trendHtml(trend)}
+                </span>
+            </div>
+        `;
+    }).join('');
+
+    return `
+        <div id="bb-position-rankings" style="margin-top:7px;margin-bottom:6px;padding-top:6px;border-top:1px solid #ddd;">
+            <div style="font-weight:bold;color:#333;margin-bottom:3px;">
+                Ranking ${escapeHtml(rankings.age)}yo
+            </div>
+            ${rows}
+        </div>
+    `;
+}
     function createUpdateColor(dateStr) {
         if (!dateStr) return '#777';
         const parts = String(dateStr).split('.');
@@ -834,6 +912,25 @@
         line.innerHTML = `${label} <b style="color:#2e7d32;">${today}</b>`;
     }
 
+    async function refreshMainLastUpdateLine(playerName, age, playerLink, country) {
+    const line = document.getElementById('bb-main-last-update');
+    if (!line) return;
+
+    const updateData = await fetchMainLastUpdate(playerName, age, playerLink, country);
+    const lastUpdate = updateData.lastUpdate;
+    const rankings = updateData.rankings;
+
+    line.innerHTML = `
+        <div>
+            ${
+                lastUpdate
+                    ? `${uploadText('lastUpdate')} <b style="color:${createUpdateColor(lastUpdate)};">${escapeHtml(lastUpdate)}</b>`
+                    : `${uploadText('lastUpdate')} <span style="color:#777;">${uploadText('notFound')}</span>`
+            }
+        </div>
+        ${buildRankingHtml(rankings)}
+    `;
+}
     function absoluteUrl(href) { return href?.startsWith('http') ? href : new URL(href, window.location.origin).href; }
 
     async function buildSidebarContent() {
@@ -903,11 +1000,9 @@
             });
         }
 
-        if (FEATURES.lastUpdate) {
-            const line = document.getElementById('bb-main-last-update');
-            const lastUpdate = await fetchMainLastUpdate(playerName, age, playerLink, country);
-            if (line) line.innerHTML = lastUpdate ? `${uploadText('lastUpdate')} <b style="color:${createUpdateColor(lastUpdate)};">${escapeHtml(lastUpdate)}</b>` : `${uploadText('lastUpdate')} <span style="color:#777;">${uploadText('notFound')}</span>`;
-        }
+       if (FEATURES.lastUpdate) {
+    await refreshMainLastUpdateLine(playerName, age, playerLink, country);
+}
 
         if (FEATURES.trainingSuggestion) {
             const wrap = document.getElementById('bb-training-plan-content');
