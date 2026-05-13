@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BuzzerBeater U21 Tools
 // @namespace    http://tampermonkey.net/
-// @version      7.1.0
+// @version      7.1.1
 // @description  Rollenbasierte Schweizer U21 Suite mit Core API, Upload, Training, Ranking, Nachrichten, Export und Scouting Workflow
 // @match        https://www.buzzerbeater.com/player/*
 // @match        https://buzzerbeater.com/player/*
@@ -20,7 +20,7 @@
 // CONFIG
 // ========================
 
-const SCRIPT_VERSION = '7.0.0';
+const SCRIPT_VERSION = '7.1.1';
 const DEBUG = false;
     function debugLog(...args) {
     if (DEBUG) {
@@ -170,7 +170,7 @@ function enableLocalAdminPreview() {
         TSos: 'SW', DT: 'RW', DifP: 'AV', Pal: 'DRI', Pen: 'ZZK', TdS: 'ZW', DifA: 'IV', Rim: 'REB', Stp: 'BLO', Res: 'KON', TL: 'FW'
     };
 
-    const MESSAGE_TEMPLATES = ['NEW', 'Draft', 'Discord', 'U21-Upload'];
+    const MESSAGE_TEMPLATES = ['NEW', 'Draft', 'Discord', 'U21-Upload', 'Take over', 'Update'];
 
     const LANGUAGE_BUTTONS = [
         { code: 'DE', color: '#1565c0' },
@@ -1287,6 +1287,120 @@ async function resumeScoutingWorkflow() {
         };
         return templates[language] || templates.DE;
     }
+    function getTakeOverMessageText(language, playerName, managerName) {
+    const greetingName = managerName ? ` ${managerName}` : '';
+
+    const templates = {
+        DE: `Hallo${greetingName},
+
+Ich bin der U21-Coach der Schweizer Nationalmannschaft.
+
+Dein Spieler ${playerName} wurde die letzten 1-2 Saisons von einem unserer Scouts betreut. Da es nun näher an eine Nominierung geht, werde ich die Betreuung selbst übernehmen.
+
+Bitte teile mir nochmals mit, was der aktuelle Trainingsplan ist. Unter Berücksichtigung deiner Wünsche können wir dann gemeinsam einen optimalen Plan ausarbeiten, um die Chancen deines Spielers zu erhöhen.
+
+Vielen Dank für deine Mithilfe.
+
+Liebe Grüsse
+Brausetablette`,
+
+        ENG: `Hello${greetingName},
+
+I am the U21 coach of the Swiss national team.
+
+Your player ${playerName} has been followed by one of our scouts for the last 1-2 seasons. Since he is now getting closer to a possible nomination, I will take over the support myself.
+
+Please let me know again what the current training plan is. Taking your wishes into account, we can then work out an optimal plan together to increase your player’s chances.
+
+Thank you very much for your help.
+
+Best regards
+Brausetablette`,
+
+        FRA: `Bonjour${greetingName},
+
+Je suis l'entraîneur U21 de l'équipe nationale suisse.
+
+Ton joueur ${playerName} a été suivi par l'un de nos scouts durant les 1-2 dernières saisons. Comme il se rapproche maintenant d'une éventuelle nomination, je vais reprendre moi-même le suivi.
+
+Merci de me communiquer à nouveau le plan d'entraînement actuel. En tenant compte de tes souhaits, nous pourrons ensuite élaborer ensemble un plan optimal afin d'augmenter les chances de ton joueur.
+
+Merci beaucoup pour ton aide.
+
+Meilleures salutations
+Brausetablette`,
+
+        IT: `Ciao${greetingName},
+
+Sono l'allenatore U21 della nazionale svizzera.
+
+Il tuo giocatore ${playerName} è stato seguito da uno dei nostri scout nelle ultime 1-2 stagioni. Poiché ora si avvicina a una possibile convocazione, prenderò io stesso in carico il suo supporto.
+
+Ti chiedo di comunicarmi nuovamente qual è il piano di allenamento attuale. Tenendo conto dei tuoi desideri, potremo poi elaborare insieme un piano ottimale per aumentare le possibilità del tuo giocatore.
+
+Grazie mille per il tuo aiuto.
+
+Cordiali saluti
+Brausetablette`
+    };
+
+    return templates[language] || templates.DE;
+}
+    function getUpdateMessageText(language, playerName, managerName) {
+    const greetingName = managerName ? ` ${managerName}` : '';
+
+    const templates = {
+        DE: `Hallo${greetingName},
+
+Ich schreibe dir einmal mehr, um mich nach ${playerName} zu erkundigen.
+
+Wie sieht das weitere Training aus, bist du zufrieden mit seinem Fortschritt?
+Hast du Fragen an mich betreffend Training, Anforderungen, etc.?
+
+Lass es mich wissen, wie ich helfen kann.
+
+Liebe Grüsse
+Brausetablette`,
+
+        ENG: `Hello${greetingName},
+
+I am writing to you once again to ask about ${playerName}.
+
+How is his training progressing, and are you satisfied with his development?
+Do you have any questions for me regarding training, requirements, etc.?
+
+Let me know how I can help.
+
+Best regards
+Brausetablette`,
+
+        FRA: `Bonjour${greetingName},
+
+Je t'écris une nouvelle fois afin de prendre des nouvelles de ${playerName}.
+
+Comment se déroule la suite de son entraînement, et es-tu satisfait de ses progrès ?
+As-tu des questions à me poser concernant l'entraînement, les exigences, etc. ?
+
+Fais-moi savoir comment je peux t'aider.
+
+Meilleures salutations
+Brausetablette`,
+
+        IT: `Ciao${greetingName},
+
+Ti scrivo ancora una volta per chiederti notizie su ${playerName}.
+
+Come sta procedendo il suo allenamento, e sei soddisfatto dei suoi progressi?
+Hai domande da farmi riguardo all'allenamento, ai requisiti, ecc.?
+
+Fammi sapere come posso aiutarti.
+
+Cordiali saluti
+Brausetablette`
+    };
+
+    return templates[language] || templates.DE;
+}
    function overlayText() {
     const lang = uiLang();
 
@@ -1324,11 +1438,13 @@ async function resumeScoutingWorkflow() {
     return texts[lang] || texts.en;
 }
     function getTemplateMessage(templateKey, language, playerName, managerName) {
-        if (templateKey === 'NEW') return '';
-        if (templateKey === 'Discord') return getDiscordMessageText(language, managerName);
-        if (templateKey === 'U21-Upload') return getU21UploadMessageText(language, managerName);
-        return getDraftMessageText(language, playerName, managerName);
-    }
+    if (templateKey === 'NEW') return '';
+    if (templateKey === 'Discord') return getDiscordMessageText(language, managerName);
+    if (templateKey === 'U21-Upload') return getU21UploadMessageText(language, managerName);
+    if (templateKey === 'Take over') return getTakeOverMessageText(language, playerName, managerName);
+    if (templateKey === 'Update') return getUpdateMessageText(language, playerName, managerName);
+    return getDraftMessageText(language, playerName, managerName);
+}
 
     async function fillComposerFromStoredPayload() {
         const raw = localStorage.getItem(CONFIG.messageStorageKey);
