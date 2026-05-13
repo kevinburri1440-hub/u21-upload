@@ -1468,7 +1468,7 @@ async function resumeScoutingWorkflow() {
         if (!profile) {
             const scoutPlainHtml = scoutData ? `<div style="margin-top:2px;"><b>${uploadText('scout')}</b> ${escapeHtml(scoutData.scout || '-')}${scoutData.mailLink ? `<a href="${escapeHtml(absoluteUrl(scoutData.mailLink))}" target="_blank" title="Nachricht an Scout" style="margin-left:4px;text-decoration:none;">✉️</a>` : ''}</div>` : '';
             wrap.innerHTML = `<div style="font-size:11px;line-height:1.45;color:#666;"><div style="margin-bottom:2px;"><b>${tr.profile}:</b> ${tr.noProfile}</div>${scoutPlainHtml}</div>`;
-            setTimeout(positionNotificationBox, 50);
+            scheduleU21LayoutUpdate();
             return;
         }
 
@@ -1559,10 +1559,7 @@ ${dropdownHtml}
         html += `</div>`;
         wrap.innerHTML = html;
 attachTrainingProfileDropdownHandler();
-setTimeout(() => {
-    syncMainAndTrainingContentHeight();
-    positionNotificationBox();
-}, 50);
+scheduleU21LayoutUpdate();
     }
 
 // ========================
@@ -1610,6 +1607,23 @@ setTimeout(() => {
         }
         return select;
     }
+    // ========================
+// UI
+// ========================
+
+let U21_LAYOUT_TIMER = null;
+
+function scheduleU21LayoutUpdate(delay = 80) {
+    clearTimeout(U21_LAYOUT_TIMER);
+
+    U21_LAYOUT_TIMER = setTimeout(() => {
+        requestAnimationFrame(() => {
+            syncMainAndTrainingContentHeight();
+            positionNotificationBox();
+        });
+    }, delay);
+}
+
 
   function createShell() {
     const existing = document.getElementById('bb-u21-combined-shell');
@@ -1890,7 +1904,7 @@ function resetToolsBoxPosition() {
         rightBg.style.display = hideInfo && hideTraining ? 'none' : '';
     }
 
-    setTimeout(positionNotificationBox, 50);
+    scheduleU21LayoutUpdate();
 }
     function createTrainingBox(shell) {
     if (!FEATURES.trainingSuggestion) return null;
@@ -2057,7 +2071,7 @@ function resetToolsBoxPosition() {
             if (isTitle) return `<div style="font-weight:bold;margin-top:2px;margin-bottom:4px;color:#333;">${text}</div>`;
             return `<div style="margin-bottom:3px;">• ${text}</div>`;
         }).join('');
-        setTimeout(positionNotificationBox, 50);
+        scheduleU21LayoutUpdate();
     }
 
     function addSection(parent, title) {
@@ -2277,6 +2291,7 @@ const messageSection = toolsBox?.querySelector('#bb-u21-message-section');
        // Daten parallel nachladen, damit die Sidebar sofort sichtbar bleibt
 const backgroundTasks = [];
 
+
 if (FEATURES.managerLanguage) {
     backgroundTasks.push(
         fetchManagerLanguage(teamName).then(language => {
@@ -2318,16 +2333,21 @@ if (FEATURES.trainingSuggestion) {
 SUGGESTED_PROFILE_CACHE = trainingData.profile || '';
 SCOUT_CACHE = scoutData;
 
-await fetchTrainingProfiles();
-
 renderTrainingPlan(trainingData, scoutData);
 renderNotificationBox(trainingData.infos || []);
+
+fetchTrainingProfiles().then(() => {
+    if (TRAINING_CACHE) {
+        renderTrainingPlan(TRAINING_CACHE, SCOUT_CACHE);
+    }
+});
 })());
 }
 
 await Promise.allSettled(backgroundTasks);
         attachPanelToggleHandlers();
 applyPanelVisibility();
+        scheduleU21LayoutUpdate(120);
 
 debugLog('Background loading finished');
 
