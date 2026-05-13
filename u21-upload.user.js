@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         BuzzerBeater U21 Tools Combined Secure Managers
+// @name         BuzzerBeater U21 Tools
 // @namespace    http://tampermonkey.net/
-// @version      6.4
-// @description  Rollenbasierte U21 Suite ohne Scouting Workflow, mit Sell Button und Benachrichtigungsbox
+// @version      7.1.0
+// @description  Rollenbasierte Schweizer U21 Suite mit Core API, Upload, Training, Ranking, Nachrichten, Export und Scouting Workflow
 // @match        https://www.buzzerbeater.com/player/*
 // @match        https://buzzerbeater.com/player/*
 // @match        https://www.buzzerbeater.com/community/bbmail.aspx*
@@ -16,24 +16,41 @@
 (function () {
     'use strict';
 
+// ========================
+// CONFIG
+// ========================
+
+const SCRIPT_VERSION = '7.0.0';
+const DEBUG = false;
+    function debugLog(...args) {
+    if (DEBUG) {
+        console.log('[U21 Tools]', ...args);
+    }
+}
+
     const CONFIG = {
-        accessWebAppUrl: 'https://script.google.com/macros/s/AKfycbyJCLWtdHI2gOrFXbhWOXFAMhQwrv9C2Y1n4eV19kw7Z72VM2Tq39T7C21FO91J1INBtg/exec',
+        coreApiUrl: 'https://script.google.com/macros/s/AKfycbwUFJ_TKQESuysbNxaQil8gQRntqEnJMkHqFywLHQWgOa93fwUlzAhEJ-iStxYothmV/exec',
         accessToken: '',
         accessOwner: '',
 
-        uploadWebAppUrl: 'https://script.google.com/macros/s/AKfycbxP5ibVZZVnnkvP_V_ctkenN0xiGRx-Q1cZ_aVczRU6_KnJgQjnUK2bfcCCdwKdhEVJ/exec',
-        trainingWebAppUrl: 'https://script.google.com/macros/s/AKfycbxU_WJKLnQxzOS0C6F085LJUhI9fy_rN9yC-gfQh9SXzPbV3lKoxlw2RELFPDJc39zl/exec',
-        exportWebAppUrl: 'https://script.google.com/macros/s/AKfycbySrmbfomj9y2yLxaPCj06p-zX-rj2WUXr-hsV2rFm_SLEdTCNFxi36fE0PCofiNK0n/exec',
-        managerLanguageWebAppUrl: 'https://script.google.com/macros/s/AKfycbx9q49TTyVIUU6Cp5zfqsSLmbcSIVmPigULUseS7qDRyL6T0nkzdGLdhMLW2_cZ0z-A/exec',
 
         messageStorageKey: 'bb_u21_combined_message_v62',
+        scoutingStorageKey: 'bb_u21_nextgen_scouting_v1',
       requestTimeoutMs: 90000,
         initDelayMs: 300,
-        trainingPanelWidth: 430
+        trainingPanelWidth: 430,
+        hideInfoBoxKey: 'bb_u21_hide_info_box_v1',
+        hideTrainingBoxKey: 'bb_u21_hide_training_box_v1',
+        toolsBoxPositionKey: 'bb_u21_tools_box_position_v1'
     };
 
     let CURRENT_ROLE = 'manager';
     let ACCESS_TRUSTED = false;
+   let TRAINING_CACHE = null;
+let SUGGESTED_PROFILE_CACHE = '';
+let TRAINING_PROFILES_CACHE = null;
+let SCOUT_CACHE = null;
+let PLAYER_REFRESH_CACHE = null;
 
     let FEATURES = {
         upload: true,
@@ -45,7 +62,32 @@
         scoutingWorkflow: false,
         managerLanguage: false
     };
+    function hasLocalAccessCredentials() {
+    return !!String(CONFIG.accessToken || '').trim()
+        && !!String(CONFIG.accessOwner || '').trim();
+}
 
+function enableLocalAdminPreview() {
+    if (!hasLocalAccessCredentials()) return;
+
+    CURRENT_ROLE = 'admin';
+    ACCESS_TRUSTED = false;
+
+    FEATURES = {
+        upload: true,
+        scoutInfo: true,
+        lastUpdate: true,
+        trainingSuggestion: true,
+        exportOtherCountries: true,
+        messages: true,
+        scoutingWorkflow: true,
+        managerLanguage: true
+    };
+}
+
+// ========================
+// CONSTANTS
+// ========================
     const SWISS_ALIASES = ['schweiz', 'switzerland', 'suisse', 'svizzera', 'svizra'];
 
   const SKILL_LABELS = {
@@ -137,40 +179,143 @@
         { code: 'IT', color: '#ef6c00' }
     ];
 
-    const UPLOAD_TEXTS = {
-        de: {
-            playerDetected: 'Spieler erkannt:', scout: 'Scout:', lastUpdateLoading: 'Letztes Update wird geladen ...', lastUpdate: 'Letztes Update:', notFound: 'nicht gefunden', onlySwiss: 'Dieses Tool ist nur für Schweizer Spieler bis 21 Jahre gedacht.', noSkills: 'Keine Skills sichtbar - Update nicht möglich.', uploadButton: 'Upload to Database', uploadToast: 'Upload:', uploadSuccessUpdated: '✅ Datenbank aktualisiert:', uploadSuccessInserted: '✅ Datenbank neu gespeichert:', uploadOnlySwiss: 'Nur für Schweizer Spieler bis 21 Jahre gedacht.', uploadFailed: 'Upload fehlgeschlagen:', unknownPlayer: 'Unbekannt', languageLoading: 'Sprache wird geladen ...', languageLabel: 'Sprache:',
-            sellButton: 'Sell', sellTitle: 'Sendet eine Verkaufsbenachrichtigung an Discord', sellOnlySwissU21: 'Nur für Schweizer Spieler bis 21 Jahre', sellNoAuction: 'Nur aktiv, wenn ein Verkaufsdatum sichtbar ist', sellQueued: '✅ Sell-Meldung wurde vorgemerkt', sellFailed: 'Sell-Meldung fehlgeschlagen:',
-            notificationTitle: 'Benachrichtigung', notificationLoading: 'Wird geladen...', notificationEmpty: 'Keine aktuellen Benachrichtigungen.',
-            exportButton: '📤 Export other countries', exportOnlyU21: 'Nur für Spieler bis 21 Jahre', exportTitle: 'Exportiert den Spieler in den Google-Sheet-Tab other countries', exportFailed: 'Export Fehler:'
-        },
-        en: {
-            playerDetected: 'Player detected:', scout: 'Scout:', lastUpdateLoading: 'Last update is loading ...', lastUpdate: 'Last update:', notFound: 'not found', onlySwiss: 'This tool is only intended for Swiss players up to 21 years old.', noSkills: 'No skills visible - update not possible.', uploadButton: 'Upload to Database', uploadToast: 'Upload:', uploadSuccessUpdated: '✅ Database updated:', uploadSuccessInserted: '✅ Saved to database:', uploadOnlySwiss: 'Only intended for Swiss players up to 21 years old.', uploadFailed: 'Upload failed:', unknownPlayer: 'Unknown', languageLoading: 'Language loading ...', languageLabel: 'Language:',
-            sellButton: 'Sell', sellTitle: 'Sends a sale notification to Discord', sellOnlySwissU21: 'Only for Swiss players up to 21 years old', sellNoAuction: 'Only active when an auction end date is visible', sellQueued: '✅ Sale notification has been queued', sellFailed: 'Sale notification failed:',
-            notificationTitle: 'Notification', notificationLoading: 'Loading...', notificationEmpty: 'No current notifications.',
-            exportButton: '📤 Export other countries', exportOnlyU21: 'Only for players up to 21 years old', exportTitle: 'Exports the player to the other countries Google Sheet tab', exportFailed: 'Export error:'
-        },
-        fr: {
-            playerDetected: 'Joueur détecté :', scout: 'Scout :', lastUpdateLoading: 'Dernière mise à jour en cours de chargement ...', lastUpdate: 'Dernière mise à jour :', notFound: 'introuvable', onlySwiss: 'Cet outil est uniquement destiné aux joueurs suisses jusqu’à 21 ans.', noSkills: 'Aucune compétence visible - mise à jour impossible.', uploadButton: 'Upload to Database', uploadToast: 'Téléversement :', uploadSuccessUpdated: '✅ Base de données mise à jour :', uploadSuccessInserted: '✅ Enregistré dans la base :', uploadOnlySwiss: 'Uniquement pour les joueurs suisses jusqu’à 21 ans.', uploadFailed: 'Échec du téléversement :', unknownPlayer: 'Inconnu', languageLoading: 'Langue en chargement ...', languageLabel: 'Langue :',
-            sellButton: 'Vente', sellTitle: 'Envoie une notification de vente sur Discord', sellOnlySwissU21: 'Uniquement pour les joueurs suisses jusqu’à 21 ans', sellNoAuction: 'Actif uniquement si une date de fin d’enchère est visible', sellQueued: '✅ Notification de vente mise en file d’attente', sellFailed: 'Échec de la notification de vente :',
-            notificationTitle: 'Notification', notificationLoading: 'Chargement...', notificationEmpty: 'Aucune notification actuelle.',
-            exportButton: '📤 Export autres pays', exportOnlyU21: 'Uniquement pour les joueurs jusqu’à 21 ans', exportTitle: 'Exporte le joueur dans l’onglet Google Sheet other countries', exportFailed: 'Erreur export :'
-        },
-        it: {
-            playerDetected: 'Giocatore rilevato:', scout: 'Scout:', lastUpdateLoading: 'Ultimo aggiornamento in caricamento ...', lastUpdate: 'Ultimo aggiornamento:', notFound: 'non trovato', onlySwiss: 'Questo strumento è destinato solo a giocatori svizzeri fino a 21 anni.', noSkills: 'Nessuna skill visibile - aggiornamento non possibile.', uploadButton: 'Upload to Database', uploadToast: 'Upload:', uploadSuccessUpdated: '✅ Database aggiornato:', uploadSuccessInserted: '✅ Salvato nel database:', uploadOnlySwiss: 'Solo per giocatori svizzeri fino a 21 anni.', uploadFailed: 'Upload fallito:', unknownPlayer: 'Sconosciuto', languageLoading: 'Lingua in caricamento ...', languageLabel: 'Lingua:',
-            sellButton: 'Vendi', sellTitle: 'Invia una notifica di vendita su Discord', sellOnlySwissU21: 'Solo per giocatori svizzeri fino a 21 anni', sellNoAuction: 'Attivo solo se è visibile una data di fine asta', sellQueued: '✅ Notifica di vendita messa in coda', sellFailed: 'Notifica di vendita fallita:',
-            notificationTitle: 'Notifica', notificationLoading: 'Caricamento...', notificationEmpty: 'Nessuna notifica attuale.',
-            exportButton: '📤 Export altri paesi', exportOnlyU21: 'Solo per giocatori fino a 21 anni', exportTitle: 'Esporta il giocatore nel tab Google Sheet other countries', exportFailed: 'Errore export:'
-        }
-    };
+   const UPLOAD_TEXTS = {
+    de: {
+        playerRecognition: 'Spielererkennung',
+        swissU21: 'Schweiz U21',
+        hideInfos: 'Infos U21 ausblenden',
+        hideTraining: 'Trainingsvorschlag ausblenden',
 
-    const TRAINING_TEXTS = {
-        de: { title: 'Trainingsvorschlag', loading: 'Trainingsvorschlag wird geladen ...', profile: 'Spielerprofil', noProfile: 'kein Spielerprofil hinterlegt, Scout kontaktieren', progress: 'Fortschritt', goalsDone: 'Ziele erfüllt', goals: 'Trainingsziele', noPlan: 'Kein Trainingsplan gefunden', done: 'erfüllt', popsLeft: 'Pops fehlen', tipLabel: 'Tipp', noteLabel: 'Hinweis', tipFw: 'FW kann durch Trainingsplatz verbessert werden', tipMinutes: 'Für optimale Form 50-70 min Spielzeit pro Woche anstreben', noteContact: 'Scout kontaktieren empfohlen', noteContactAt: 'Scout kontaktieren ab 50% Fortschritt', onlyU21: 'Trainingsvorschlag nur verfügbar für Schweizer Spieler bis 21 Jahre.' },
-        en: { title: 'Training suggestion', loading: 'Training suggestion is loading ...', profile: 'Player profile', noProfile: 'no player profile assigned, contact scout', progress: 'Progress', goalsDone: 'goals completed', goals: 'Training goals', noPlan: 'No training plan found', done: 'completed', popsLeft: 'pops missing', tipLabel: 'Tip', noteLabel: 'Note', tipFw: 'FT can be improved through the training court', tipMinutes: 'For optimal form, aim for 50-70 minutes of playing time per week', noteContact: 'Contacting the scout is recommended', noteContactAt: 'Contact scout from 50% progress', onlyU21: 'Training suggestion only available for Swiss players up to 21 years old.' },
-        fr: { title: 'Suggestion d’entraînement', loading: 'Suggestion d’entraînement en cours de chargement ...', profile: 'Profil du joueur', noProfile: 'aucun profil joueur défini, contacter le scout', progress: 'Progression', goalsDone: 'objectifs atteints', goals: 'Objectifs d’entraînement', noPlan: 'Aucun plan d’entraînement trouvé', done: 'atteint', popsLeft: 'pops manquants', tipLabel: 'Conseil', noteLabel: 'Remarque', tipFw: 'LF peut être amélioré avec le terrain d’entraînement', tipMinutes: 'Pour une forme optimale, viser 50-70 minutes de temps de jeu par semaine', noteContact: 'Il est recommandé de contacter le scout', noteContactAt: 'Contacter le scout à partir de 50% de progression', onlyU21: 'Suggestion d’entraînement disponible uniquement pour les joueurs suisses jusqu’à 21 ans.' },
-        it: { title: 'Suggerimento allenamento', loading: 'Suggerimento allenamento in caricamento ...', profile: 'Profilo giocatore', noProfile: 'nessun profilo giocatore inserito, contattare lo scout', progress: 'Progresso', goalsDone: 'obiettivi completati', goals: 'Obiettivi di allenamento', noPlan: 'Nessun piano di allenamento trovato', done: 'completato', popsLeft: 'pop mancanti', tipLabel: 'Consiglio', noteLabel: 'Nota', tipFw: 'TL può essere migliorato con il campo di allenamento', tipMinutes: 'Per una forma ottimale, puntare a 50-70 minuti di gioco a settimana', noteContact: 'Si consiglia di contattare lo scout', noteContactAt: 'Contattare lo scout dal 50% di progresso', onlyU21: 'Suggerimento allenamento disponibile solo per giocatori svizzeri fino a 21 anni.' }
-    };
+        playerDetected: 'Spieler erkannt:', scout: 'Scout:', lastUpdateLoading: 'Letztes Update wird geladen ...', lastUpdate: 'Letztes Update:', notFound: 'nicht gefunden', onlySwiss: 'Dieses Tool ist nur für Schweizer Spieler bis 21 Jahre gedacht.', noSkills: 'Keine Skills sichtbar - Update nicht möglich.', uploadButton: 'Upload to Database', uploadToast: 'Upload:', uploadSuccessUpdated: '✅ Datenbank aktualisiert:', uploadSuccessInserted: '✅ Datenbank neu gespeichert:', uploadOnlySwiss: 'Nur für Schweizer Spieler bis 21 Jahre gedacht.', uploadFailed: 'Upload fehlgeschlagen:', unknownPlayer: 'Unbekannt', languageLoading: 'Sprache wird geladen ...', languageLabel: 'Sprache:',
+        sellButton: 'Sell', sellTitle: 'Sendet eine Verkaufsbenachrichtigung an Discord', sellOnlySwissU21: 'Nur für Schweizer Spieler bis 21 Jahre', sellNoAuction: 'Nur aktiv, wenn ein Verkaufsdatum sichtbar ist', sellQueued: '✅ Sell-Meldung wurde vorgemerkt', sellFailed: 'Sell-Meldung fehlgeschlagen:',
+        notificationTitle: 'Benachrichtigung', notificationLoading: 'Wird geladen...', notificationEmpty: 'Keine aktuellen Benachrichtigungen.',
+        exportButton: '📤 Export other countries', exportOnlyU21: 'Nur für Spieler bis 21 Jahre', exportTitle: 'Exportiert den Spieler in den Google-Sheet-Tab other countries', exportFailed: 'Export Fehler:'
+    },
+    en: {
+        playerRecognition: 'Player recognition',
+        swissU21: 'Swiss U21',
+        hideInfos: 'Hide U21 info',
+        hideTraining: 'Hide training suggestion',
 
+        playerDetected: 'Player detected:', scout: 'Scout:', lastUpdateLoading: 'Last update is loading ...', lastUpdate: 'Last update:', notFound: 'not found', onlySwiss: 'This tool is only intended for Swiss players up to 21 years old.', noSkills: 'No skills visible - update not possible.', uploadButton: 'Upload to Database', uploadToast: 'Upload:', uploadSuccessUpdated: '✅ Database updated:', uploadSuccessInserted: '✅ Saved to database:', uploadOnlySwiss: 'Only intended for Swiss players up to 21 years old.', uploadFailed: 'Upload failed:', unknownPlayer: 'Unknown', languageLoading: 'Language loading ...', languageLabel: 'Language:',
+        sellButton: 'Sell', sellTitle: 'Sends a sale notification to Discord', sellOnlySwissU21: 'Only for Swiss players up to 21 years old', sellNoAuction: 'Only active when an auction end date is visible', sellQueued: '✅ Sale notification has been queued', sellFailed: 'Sale notification failed:',
+        notificationTitle: 'Notification', notificationLoading: 'Loading...', notificationEmpty: 'No current notifications.',
+        exportButton: '📤 Export other countries', exportOnlyU21: 'Only for players up to 21 years old', exportTitle: 'Exports the player to the other countries Google Sheet tab', exportFailed: 'Export error:'
+    },
+    fr: {
+        playerRecognition: 'Reconnaissance du joueur',
+        swissU21: 'Suisse U21',
+        hideInfos: 'Masquer les infos U21',
+        hideTraining: 'Masquer la suggestion d’entraînement',
+
+        playerDetected: 'Joueur détecté :', scout: 'Scout :', lastUpdateLoading: 'Dernière mise à jour en cours de chargement ...', lastUpdate: 'Dernière mise à jour :', notFound: 'introuvable', onlySwiss: 'Cet outil est uniquement destiné aux joueurs suisses jusqu’à 21 ans.', noSkills: 'Aucune compétence visible - mise à jour impossible.', uploadButton: 'Upload to Database', uploadToast: 'Téléversement :', uploadSuccessUpdated: '✅ Base de données mise à jour :', uploadSuccessInserted: '✅ Enregistré dans la base :', uploadOnlySwiss: 'Uniquement pour les joueurs suisses jusqu’à 21 ans.', uploadFailed: 'Échec du téléversement :', unknownPlayer: 'Inconnu', languageLoading: 'Langue en chargement ...', languageLabel: 'Langue :',
+        sellButton: 'Vente', sellTitle: 'Envoie une notification de vente sur Discord', sellOnlySwissU21: 'Uniquement pour les joueurs suisses jusqu’à 21 ans', sellNoAuction: 'Actif uniquement si une date de fin d’enchère est visible', sellQueued: '✅ Notification de vente mise en file d’attente', sellFailed: 'Échec de la notification de vente :',
+        notificationTitle: 'Notification', notificationLoading: 'Chargement...', notificationEmpty: 'Aucune notification actuelle.',
+        exportButton: '📤 Export autres pays', exportOnlyU21: 'Uniquement pour les joueurs jusqu’à 21 ans', exportTitle: 'Exporte le joueur dans l’onglet Google Sheet other countries', exportFailed: 'Erreur export :'
+    },
+    it: {
+        playerRecognition: 'Riconoscimento giocatore',
+        swissU21: 'Svizzera U21',
+        hideInfos: 'Nascondi info U21',
+        hideTraining: 'Nascondi suggerimento allenamento',
+
+        playerDetected: 'Giocatore rilevato:', scout: 'Scout:', lastUpdateLoading: 'Ultimo aggiornamento in caricamento ...', lastUpdate: 'Ultimo aggiornamento:', notFound: 'non trovato', onlySwiss: 'Questo strumento è destinato solo a giocatori svizzeri fino a 21 anni.', noSkills: 'Nessuna skill visibile - aggiornamento non possibile.', uploadButton: 'Upload to Database', uploadToast: 'Upload:', uploadSuccessUpdated: '✅ Database aggiornato:', uploadSuccessInserted: '✅ Salvato nel database:', uploadOnlySwiss: 'Solo per giocatori svizzeri fino a 21 anni.', uploadFailed: 'Upload fallito:', unknownPlayer: 'Sconosciuto', languageLoading: 'Lingua in caricamento ...', languageLabel: 'Lingua:',
+        sellButton: 'Vendi', sellTitle: 'Invia una notifica di vendita su Discord', sellOnlySwissU21: 'Solo per giocatori svizzeri fino a 21 anni', sellNoAuction: 'Attivo solo se è visibile una data di fine asta', sellQueued: '✅ Notifica di vendita messa in coda', sellFailed: 'Notifica di vendita fallita:',
+        notificationTitle: 'Notifica', notificationLoading: 'Caricamento...', notificationEmpty: 'Nessuna notifica attuale.',
+        exportButton: '📤 Export altri paesi', exportOnlyU21: 'Solo per giocatori fino a 21 anni', exportTitle: 'Esporta il giocatore nel tab Google Sheet other countries', exportFailed: 'Errore export:'
+    }
+};
+
+const TRAINING_TEXTS = {
+    de: {
+        title: 'Trainingsvorschlag',
+        loading: 'Trainingsvorschlag wird geladen ...',
+        profile: 'Spielerprofil',
+        suggestedProfile: 'vorgeschlagenes Spielerprofil',
+        loadOtherProfile: 'anderes Spielerprofil laden',
+        noProfile: 'kein Spielerprofil hinterlegt, Scout kontaktieren',
+        progress: 'Fortschritt',
+        goalsDone: 'Ziele erfüllt',
+        goals: 'Trainingsziele',
+        noPlan: 'Kein Trainingsplan gefunden',
+        done: 'erfüllt',
+        popsLeft: 'Pops fehlen',
+        tipLabel: 'Tipp',
+        noteLabel: 'Hinweis',
+        tipFw: 'FW kann durch Trainingsplatz verbessert werden',
+        tipMinutes: 'Für optimale Form 50-70 min Spielzeit pro Woche anstreben',
+        noteContact: 'Scout kontaktieren empfohlen',
+        noteContactAt: 'Scout kontaktieren ab 50% Fortschritt',
+        onlyU21: 'Trainingsvorschlag nur verfügbar für Schweizer Spieler bis 21 Jahre.'
+    },
+    en: {
+        title: 'Training suggestion',
+        loading: 'Training suggestion is loading ...',
+        profile: 'Player profile',
+        suggestedProfile: 'suggested player profile',
+        loadOtherProfile: 'load other player profile',
+        noProfile: 'no player profile assigned, contact scout',
+        progress: 'Progress',
+        goalsDone: 'goals completed',
+        goals: 'Training goals',
+        noPlan: 'No training plan found',
+        done: 'completed',
+        popsLeft: 'pops missing',
+        tipLabel: 'Tip',
+        noteLabel: 'Note',
+        tipFw: 'FT can be improved through the training court',
+        tipMinutes: 'For optimal form, aim for 50-70 minutes of playing time per week',
+        noteContact: 'Contacting the scout is recommended',
+        noteContactAt: 'Contact scout from 50% progress',
+        onlyU21: 'Training suggestion only available for Swiss players up to 21 years old.'
+    },
+    fr: {
+        title: 'Suggestion d’entraînement',
+        loading: 'Suggestion d’entraînement en cours de chargement ...',
+        profile: 'Profil du joueur',
+        suggestedProfile: 'profil joueur suggéré',
+        loadOtherProfile: 'charger un autre profil joueur',
+        noProfile: 'aucun profil joueur défini, contacter le scout',
+        progress: 'Progression',
+        goalsDone: 'objectifs atteints',
+        goals: 'Objectifs d’entraînement',
+        noPlan: 'Aucun plan d’entraînement trouvé',
+        done: 'atteint',
+        popsLeft: 'pops manquants',
+        tipLabel: 'Conseil',
+        noteLabel: 'Remarque',
+        tipFw: 'LF peut être amélioré avec le terrain d’entraînement',
+        tipMinutes: 'Pour une forme optimale, viser 50-70 minutes de temps de jeu par semaine',
+        noteContact: 'Il est recommandé de contacter le scout',
+        noteContactAt: 'Contacter le scout à partir de 50% de progression',
+        onlyU21: 'Suggestion d’entraînement disponible uniquement pour les joueurs suisses jusqu’à 21 ans.'
+    },
+    it: {
+        title: 'Suggerimento allenamento',
+        loading: 'Suggerimento allenamento in caricamento ...',
+        profile: 'Profilo giocatore',
+        suggestedProfile: 'profilo giocatore suggerito',
+        loadOtherProfile: 'carica altro profilo giocatore',
+        noProfile: 'nessun profilo giocatore inserito, contattare lo scout',
+        progress: 'Progresso',
+        goalsDone: 'obiettivi completati',
+        goals: 'Obiettivi di allenamento',
+        noPlan: 'Nessun piano di allenamento trovato',
+        done: 'completato',
+        popsLeft: 'pop mancanti',
+        tipLabel: 'Consiglio',
+        noteLabel: 'Nota',
+        tipFw: 'TL può essere migliorato con il campo di allenamento',
+        tipMinutes: 'Per una forma ottimale, puntare a 50-70 minuti di gioco a settimana',
+        noteContact: 'Si consiglia di contattare lo scout',
+        noteContactAt: 'Contattare lo scout dal 50% di progresso',
+        onlyU21: 'Suggerimento allenamento disponibile solo per giocatori svizzeri fino a 21 anni.'
+    }
+};
+
+// ========================
+// UTILITIES
+// ========================
     function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
     function text(value) { return String(value || '').replace(/\s+/g, ' ').trim(); }
    function normalize(value) {
@@ -214,8 +359,8 @@
             <div>
                 <div style="font-weight:bold;">${message}</div>
                 <div style="font-size:11px;color:#666;margin-top:2px;">
-                   Spielererkennung, Ranking & Upload werden verarbeitet
-                </div>
+   ${overlayText().subline}
+</div>
             </div>
         </div>
     `;
@@ -295,32 +440,43 @@ function hideLoadingOverlay() {
     }
 
     async function loadAccess() {
-        if (!CONFIG.accessWebAppUrl || CONFIG.accessWebAppUrl.includes('DEINE_ROLE_WEBAPP_URL')) return;
+    const teamName = CONFIG.accessOwner || getTeamName();
 
-        const teamName = CONFIG.accessOwner || getTeamName();
-        const data = await gmPostJson(CONFIG.accessWebAppUrl, {
-            action: 'getAccess',
-            teamName,
-            accessToken: CONFIG.accessToken || ''
-        }, { rejectOnError: false });
+    const data = await gmPostJson(CONFIG.coreApiUrl, {
+        action: 'getAccess',
+        teamName,
+        accessToken: CONFIG.accessToken || ''
+    }, { rejectOnError: false });
 
-        if (!data?.ok || !data.features) return;
+    const access = data?.access;
 
-        CURRENT_ROLE = data.role || 'manager';
-        ACCESS_TRUSTED = !!data.trusted;
+    if (!data?.ok || !access?.features) return;
 
-        FEATURES = {
-            upload: !!data.features.upload,
-            scoutInfo: !!data.features.scoutInfo,
-            lastUpdate: !!data.features.lastUpdate,
-            trainingSuggestion: !!data.features.trainingSuggestion,
-            exportOtherCountries: !!data.features.exportOtherCountries,
-            messages: !!data.features.messages,
-            scoutingWorkflow: false,
-            managerLanguage: !!data.features.managerLanguage
-        };
-    }
+    CURRENT_ROLE = access.role || 'manager';
+    ACCESS_TRUSTED = !!access.trusted;
 
+    FEATURES = {
+        upload: !!access.features.upload,
+        scoutInfo: !!access.features.scoutInfo,
+        lastUpdate: !!access.features.lastUpdate,
+        trainingSuggestion: !!access.features.trainingSuggestion,
+        exportOtherCountries: !!access.features.exportOtherCountries,
+        messages: !!access.features.messages,
+        scoutingWorkflow: !!access.features.scoutingWorkflow,
+        managerLanguage: !!access.features.managerLanguage
+    };
+}
+    function isPanelHidden(key) {
+    return localStorage.getItem(key) === '1';
+}
+
+function setPanelHidden(key, hidden) {
+    localStorage.setItem(key, hidden ? '1' : '0');
+}
+
+// ========================
+// PLAYER PARSING
+// ========================
     function getPlayerId() {
         const hidden = document.getElementById('cphContent_hdnPlayerID');
         if (hidden && hidden.value) return String(hidden.value).trim();
@@ -410,6 +566,14 @@ function hideLoadingOverlay() {
     function getPlayerLink() { return window.location.href.split('#')[0]; }
     function isSwissCountryName(countryName) { return SWISS_ALIASES.includes(normalize(countryName)); }
     function isEligibleU21(country = getCountryName(), age = getPlayerAge()) { const n = parseInt(age, 10); return isSwissCountryName(country) && !Number.isNaN(n) && n <= 21; }
+    function isSwissPlayer() {
+    return isSwissCountryName(getCountryName());
+}
+
+function isEligibleForSwissU21Scouting() {
+    const age = getPlayerAgeNumber();
+    return age !== null && age <= 21 && isSwissPlayer();
+}
 
     function extractSkillNumber(value) { const match = String(value || '').match(/\((\d+)\)/); return match ? match[1] : ''; }
 
@@ -486,11 +650,27 @@ function hideLoadingOverlay() {
 }
     function getCurrentSkillMap() { const skills = collectSkills(); return Object.fromEntries(SKILL_ORDER.map((key, index) => [key, toInt(skills[index])])); }
 
+// ========================
+// PAYLOAD BUILDERS
+// ========================
     function buildUploadPayload() {
         const payload = { playerId: getPlayerId(), name: getPlayerName(), age: getPlayerAge(), link: getPlayerLink(), country: getCountryName(), managerName: getManagerName(), skills: collectSkills(), accessToken: CONFIG.accessToken || '' };
         validatePayload(payload);
         return payload;
     }
+    function buildScoutingPayload() {
+    const payload = {
+        action: 'scoutingWorkflowUpload',
+        playerId: getPlayerId(),
+        name: getPlayerName(),
+        age: getPlayerAge(),
+        skills: collectSkills(),
+        accessToken: CONFIG.accessToken || ''
+    };
+
+    validatePayload(payload, false);
+    return payload;
+}
 
     function buildExportPayload() {
         const payload = { name: getPlayerName(), age: getPlayerAge(), link: getPlayerLink(), country: getCountryName(), skills: collectSkills(), accessToken: CONFIG.accessToken || '' };
@@ -505,18 +685,44 @@ function hideLoadingOverlay() {
         if (payload.skills.some(v => v === '')) throw new Error('Mindestens ein Skill fehlt.');
     }
 
-    async function fetchUploadData(action, playerName, playerAge, playerLink) { return gmPostJson(CONFIG.uploadWebAppUrl, { action, name: playerName, age: playerAge, link: playerLink, accessToken: CONFIG.accessToken || '' }, { rejectOnError: false }); }
+// ========================
+// API
+// ========================
+    async function fetchUploadData(action, playerName, playerAge, playerLink) {
+
+    return gmPostJson(
+        CONFIG.coreApiUrl,
+        {
+            action,
+            name: playerName,
+            age: playerAge,
+            link: playerLink,
+            accessToken: CONFIG.accessToken || ''
+        },
+        { rejectOnError: false }
+    );
+}
    async function fetchSwissLastUpdate(playerName, playerAge, playerLink) {
-    const data = await fetchUploadData('getSwissLastUpdate', playerName, playerAge, playerLink);
+
+   const data = await gmPostJson(CONFIG.coreApiUrl, {
+    action: 'getPlayerRefresh',
+    playerId: getPlayerId(),
+    name: playerName,
+    age: playerAge,
+    link: playerLink,
+    accessToken: CONFIG.accessToken || ''
+}, { rejectOnError: false });
 
     return {
         lastUpdate: data?.ok ? text(data.lastUpdate) : '',
-        rankings: data?.ok && data.rankings ? data.rankings : null
+
+        rankings: data?.ok && data.rankings
+            ? data.rankings
+            : null
     };
 }
-
 async function fetchOtherCountryLastUpdate(playerName, playerAge, playerLink) {
-    const data = await gmPostJson(CONFIG.exportWebAppUrl, {
+    const data = await gmPostJson(CONFIG.coreApiUrl, {
         action: 'getOtherCountryLastUpdate',
         name: playerName,
         age: playerAge,
@@ -535,14 +741,104 @@ async function fetchMainLastUpdate(playerName, playerAge, playerLink, countryNam
         ? fetchSwissLastUpdate(playerName, playerAge, playerLink)
         : fetchOtherCountryLastUpdate(playerName, playerAge, playerLink);
 }
-    async function fetchScout(playerName, playerAge, playerLink) { const data = await fetchUploadData('getScout', playerName, playerAge, playerLink); return { scout: data?.scout || 'Brausetablette', mailLink: data?.mailLink || '' }; }
-    async function fetchManagerLanguage(teamName) { const data = await gmPostJson(CONFIG.accessWebAppUrl || CONFIG.managerLanguageWebAppUrl, { action: 'getManagerLanguage', teamName, accessToken: CONFIG.accessToken || '' }, { rejectOnError: false }); return data?.ok && data.language ? text(data.language) : 'unknown'; }
+    async function fetchScout(playerName, playerAge, playerLink) {
+    const data = await gmPostJson(CONFIG.coreApiUrl, {
+        action: 'getPlayerDashboard',
+        name: playerName,
+        age: playerAge,
+        link: playerLink,
+        accessToken: CONFIG.accessToken || ''
+    }, { rejectOnError: false });
 
+    const player = data?.player || {};
+
+    return {
+        scout: player.scout || 'Brausetablette',
+        mailLink: player.mailLink || 'https://buzzerbeater.com/community/bbmail.aspx?showType=create&user=Brausetablette'
+    };
+}
+   async function fetchManagerLanguage(teamName) {
+    const data = await gmPostJson(CONFIG.coreApiUrl, {
+        action: 'getManagerLanguage',
+        teamName,
+        accessToken: CONFIG.accessToken || ''
+    }, { rejectOnError: false });
+
+    return data?.ok && data.language
+        ? text(data.language)
+        : 'unknown';
+}
+
+ async function fetchTrainingProfiles() {
+    if (TRAINING_PROFILES_CACHE) return TRAINING_PROFILES_CACHE;
+
+    const data = await gmPostJson(CONFIG.coreApiUrl, {
+        action: 'getTrainingProfiles',
+        accessToken: CONFIG.accessToken || ''
+    }, { rejectOnError: false });
+
+    console.log('[U21 Tools] Training profiles response:', data);
+
+    const profiles =
+        Array.isArray(data?.profiles) ? data.profiles :
+        Array.isArray(data?.data?.profiles) ? data.data.profiles :
+        Array.isArray(data?.result?.profiles) ? data.result.profiles :
+        [];
+
+    TRAINING_PROFILES_CACHE = profiles;
+    return profiles;
+}
+    async function fetchTrainingPlanByProfile(profile) {
+    const data = await gmPostJson(CONFIG.coreApiUrl, {
+        action: 'getTrainingPanelByProfile',
+        profile,
+        lang: uiLang(),
+        accessToken: CONFIG.accessToken || ''
+    }, { rejectOnError: false });
+
+    const training = data?.training || {};
+
+    return {
+        profile: training.profile || profile,
+        targets: Array.isArray(training.targets) ? training.targets : [],
+        message: training.message || '',
+        infos: []
+    };
+}
     async function fetchTrainingPlan(playerName, playerAge, playerLink) {
-        const data = await gmPostJson(CONFIG.trainingWebAppUrl, { action: 'getTrainingPlan', name: playerName, age: playerAge, link: playerLink, lang: uiLang(), accessToken: CONFIG.accessToken || '' }, { rejectOnError: false });
-        return { profile: data?.profile || '', targets: Array.isArray(data?.targets) ? data.targets : [], message: data?.message || '', infos: Array.isArray(data?.infos) ? data.infos : [] };
-    }
+    const data = await gmPostJson(CONFIG.coreApiUrl, {
+        action: 'getTrainingPanel',
+        name: playerName,
+        age: playerAge,
+        link: playerLink,
+        lang: uiLang(),
+        accessToken: CONFIG.accessToken || ''
+    }, { rejectOnError: false });
 
+    const training = data?.training || {};
+
+    return {
+        profile: training.profile || '',
+        targets: Array.isArray(training.targets) ? training.targets : [],
+        message: training.message || '',
+        infos: Array.isArray(training.infos) ? training.infos : []
+    };
+}
+    async function fetchFullPlayerDashboard(playerName, playerAge, playerLink) {
+    const data = await gmPostJson(CONFIG.coreApiUrl, {
+        action: 'getFullPlayerDashboard',
+        name: playerName,
+        age: playerAge,
+        link: playerLink,
+        lang: uiLang(),
+        accessToken: CONFIG.accessToken || ''
+    }, { rejectOnError: false });
+
+    return {
+        player: data?.player || {},
+        training: data?.training || {}
+    };
+}
     async function uploadToDatabase() {
     try {
         const payload = buildUploadPayload();
@@ -552,14 +848,73 @@ async function fetchMainLastUpdate(playerName, playerAge, playerLink, countryNam
             return;
         }
 
-        showLoadingOverlay('U21 Upload läuft ...');
+       showLoadingOverlay(overlayText().uploading);
         showToast(`${uploadText('uploadToast')} ${payload.name} (${payload.age})`);
 
-        const result = await gmPostJson(CONFIG.uploadWebAppUrl, payload);
+        const result = await gmPostJson(
+    CONFIG.coreApiUrl,
+    {
+        action: 'uploadPlayer',
+        ...payload
+    }
+);
 
         showToast(`${result.action === 'updated' ? uploadText('uploadSuccessUpdated') : uploadText('uploadSuccessInserted')} ${payload.name}`);
+      if (result.lastUpdate) {
 
-        await refreshMainLastUpdateLine(payload.name, payload.age, payload.link, payload.country);
+    const line = document.getElementById('bb-main-last-update');
+
+    if (line) {
+
+        const oldRankingHtml =
+            document.getElementById('bb-position-rankings')?.outerHTML || '';
+
+        line.innerHTML = `
+            <div>
+                ${uploadText('lastUpdate')}
+                <b style="color:#2e7d32;">
+                    ${escapeHtml(result.lastUpdate)}
+                </b>
+            </div>
+
+            ${oldRankingHtml}
+
+            <div id="bb-ranking-refresh-info"
+                 style="
+                    margin-top:6px;
+                    padding:6px 8px;
+                    border-radius:5px;
+                    background:#fff8e1;
+                    border-left:4px solid #f9a825;
+                    color:#8a6d1d;
+                    font-size:11px;
+                    line-height:1.35;
+                 ">
+                ${overlayText().rankingInfo}
+            </div>
+        `;
+    }
+}
+       PLAYER_REFRESH_CACHE = {
+    name: payload.name,
+    age: payload.age,
+    link: payload.link,
+    country: payload.country
+};
+
+// Nicht sofort refreshen, sonst überschreibt Cache das neue Upload-Datum
+// await refreshMainLastUpdateLine(payload.name, payload.age, payload.link, payload.country);
+
+// Training & Notification NICHT neu laden
+// Nur Ranking später refreshen
+setTimeout(() => {
+    refreshMainLastUpdateLine(
+        payload.name,
+        payload.age,
+        payload.link,
+        payload.country
+    );
+}, 70000);
 
     } catch (err) {
         alert(uploadText('uploadFailed') + ' ' + (err.message || err));
@@ -568,23 +923,301 @@ async function fetchMainLastUpdate(playerName, playerAge, playerLink, countryNam
     }
 }
 
-    async function sendSellNotification() {
-        try {
-            const payload = { action: 'sellNotification', name: getPlayerName(), age: getPlayerAge(), country: getCountryName(), height: getPlayerHeight(), potential: getPlayerPotential(), link: getPlayerLink(), auctionEnds: getAuctionEnds(), skills: collectSkills(), accessToken: CONFIG.accessToken || '' };
-            await gmPostJson(CONFIG.uploadWebAppUrl, payload);
-            showToast(uploadText('sellQueued'));
-        } catch (err) { alert(uploadText('sellFailed') + ' ' + (err.message || err)); }
-    }
+  async function sendSellNotification() {
+    const startedAt = Date.now();
 
+    try {
+        showLoadingOverlay(overlayText().selling);
+
+        const payload = {
+            action: 'sellNotification',
+            name: getPlayerName(),
+            age: getPlayerAge(),
+            country: getCountryName(),
+            height: getPlayerHeight(),
+            potential: getPlayerPotential(),
+            link: getPlayerLink(),
+            auctionEnds: getAuctionEnds(),
+            skills: collectSkills(),
+            accessToken: CONFIG.accessToken || ''
+        };
+
+        await gmPostJson(CONFIG.coreApiUrl, payload);
+
+        showToast(uploadText('sellQueued'));
+
+    } catch (err) {
+        alert(uploadText('sellFailed') + ' ' + (err.message || err));
+
+    } finally {
+        const elapsed = Date.now() - startedAt;
+        const minVisibleMs = 1200;
+
+        setTimeout(() => {
+            hideLoadingOverlay();
+        }, Math.max(0, minVisibleMs - elapsed));
+    }
+}
     async function exportPlayer() {
         try {
-            const payload = buildExportPayload();
+            const payload = {
+    action: 'exportOtherCountryPlayer',
+    ...buildExportPayload()
+};
             showToast(`Export: ${payload.name} (${payload.country})`);
-            const result = await gmPostJson(CONFIG.exportWebAppUrl, payload);
+            const result = await gmPostJson(CONFIG.coreApiUrl, payload);
             showToast(`✅ ${result.action === 'inserted' ? 'neu gespeichert' : 'aktualisiert'}: ${payload.name}`);
             await refreshMainLastUpdateLine(payload.name, payload.age, payload.link, payload.country);
         } catch (err) { alert(uploadText('exportFailed') + ' ' + (err.message || err)); }
     }
+// ========================
+// SCOUTING WORKFLOW
+// ========================
+    function setWorkflowState(state) {
+    sessionStorage.setItem(CONFIG.scoutingStorageKey, JSON.stringify(state));
+}
+
+function getWorkflowState() {
+    try {
+        const raw = sessionStorage.getItem(CONFIG.scoutingStorageKey);
+        return raw ? JSON.parse(raw) : null;
+    } catch {
+        return null;
+    }
+}
+
+function clearWorkflowState() {
+    sessionStorage.removeItem(CONFIG.scoutingStorageKey);
+}
+
+function isVisible(el) {
+    if (!el) return false;
+    const style = window.getComputedStyle(el);
+    return style.display !== 'none' && style.visibility !== 'hidden' && el.offsetParent !== null;
+}
+
+function findActionElement(searchText) {
+    const needle = normalize(searchText);
+
+    return Array.from(document.querySelectorAll('input, button, a'))
+        .find(el => normalize(el.value || el.textContent).includes(needle)) || null;
+}
+
+function findAddButton() {
+    return findActionElement('in die auswahl aufnehmen');
+}
+
+function findRemoveButton() {
+    return findActionElement('aus kader streichen');
+}
+
+function isInTeam() {
+    return normalize(getBodyText()).includes('dieser spieler ist aktuell im kader der u21-nationalmannschaft') || !!findRemoveButton();
+}
+
+function clickVisibleButtonBySelectors(selectors, exactText) {
+    for (const btn of selectors.map(s => document.querySelector(s)).filter(Boolean)) {
+        if (isVisible(btn)) {
+            btn.click();
+            return true;
+        }
+    }
+
+    for (const btn of document.querySelectorAll('input[type="submit"], input[type="button"], button')) {
+        if (text(btn.value || btn.textContent) === exactText && isVisible(btn)) {
+            btn.click();
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function clickRecruitYesButton() {
+    return clickVisibleButtonBySelectors(
+        [
+            '#cphContent_btnNTRecruitYes2',
+            'input[id*="btnNTRecruitYes"][value="Ja"]',
+            'input[name*="btnNTRecruitYes"][value="Ja"]'
+        ],
+        'Ja'
+    );
+}
+
+function clickDismissYesButton() {
+    return clickVisibleButtonBySelectors(
+        [
+            '#cphContent_btnDismissYes2',
+            'input[id*="btnDismissYes"][value="Ja"]',
+            'input[name*="btnDismissYes"][value="Ja"]'
+        ],
+        'Ja'
+    );
+}
+
+function waitForAndClick(clickFn, maxAttempts = 35, interval = 120) {
+    return new Promise((resolve, reject) => {
+        let attempts = 0;
+
+        const timer = setInterval(() => {
+            attempts += 1;
+
+            if (clickFn()) {
+                clearInterval(timer);
+                resolve(true);
+                return;
+            }
+
+            if (attempts >= maxAttempts) {
+                clearInterval(timer);
+                reject(new Error('Bestätigungsbutton nicht gefunden.'));
+            }
+        }, interval);
+    });
+}
+
+async function triggerAddFlow() {
+    if (isInTeam()) {
+        showToast('Spieler ist bereits im Team');
+        return;
+    }
+
+    const addButton = findAddButton();
+
+    if (!addButton) {
+        throw new Error('Button "in die Auswahl aufnehmen" nicht gefunden.');
+    }
+
+    showToast('Füge Spieler zum Team hinzu ...');
+    addButton.click();
+
+    await waitForAndClick(clickRecruitYesButton);
+}
+
+async function triggerRemoveFlow() {
+    if (!isInTeam()) {
+        showToast('Spieler ist bereits entfernt');
+        return;
+    }
+
+    const removeButton = findRemoveButton();
+
+    if (!removeButton) {
+        throw new Error('Button "aus Kader streichen" nicht gefunden.');
+    }
+
+    showToast('Entferne Spieler wieder ...');
+    removeButton.click();
+
+    await waitForAndClick(clickDismissYesButton);
+}
+
+async function processScouting() {
+    const payload = buildScoutingPayload();
+
+    showToast(`Scouting: ${payload.name} | Alter ${payload.age}`);
+
+    await copyTextToClipboard(payload.skills.join('\t'));
+
+    await gmPostJson(CONFIG.coreApiUrl, payload);
+
+    showToast(`Im Sheet aktualisiert: ${payload.name} (${payload.age})`);
+}
+
+async function startScoutingWorkflow() {
+    try {
+        if (!FEATURES.scoutingWorkflow) {
+            showToast('Keine Berechtigung für Scouting Workflow.', true);
+            return;
+        }
+
+        if (getWorkflowState()?.active) {
+            showToast('Scouting-Workflow läuft bereits.', true);
+            return;
+        }
+
+        if (!isEligibleForSwissU21Scouting()) {
+            showToast('Nur für Schweizer Spieler bis 21 Jahre', true);
+            return;
+        }
+
+        const baseState = {
+            active: true,
+            name: getPlayerName(),
+            age: getPlayerAge(),
+            startedAt: Date.now()
+        };
+
+        if (!isInTeam()) {
+            setWorkflowState({ ...baseState, stage: 'adding' });
+            await triggerAddFlow();
+            return;
+        }
+
+        setWorkflowState({ ...baseState, stage: 'processing' });
+
+        await processScouting();
+
+        setWorkflowState({ ...baseState, stage: 'removing' });
+
+        await triggerRemoveFlow();
+
+    } catch (err) {
+        clearWorkflowState();
+        alert('Scouting fehlgeschlagen: ' + (err.message || err));
+    }
+}
+
+async function resumeScoutingWorkflow() {
+    if (!FEATURES.scoutingWorkflow) return;
+
+    const state = getWorkflowState();
+
+    if (!state?.active) return;
+
+    try {
+        if (!isEligibleForSwissU21Scouting()) {
+            clearWorkflowState();
+            return;
+        }
+
+        if (state.stage === 'adding') {
+            if (!isInTeam()) {
+                await triggerAddFlow();
+                return;
+            }
+
+            setWorkflowState({ ...state, stage: 'processing' });
+            await processScouting();
+
+            setWorkflowState({ ...state, stage: 'removing' });
+            await triggerRemoveFlow();
+            return;
+        }
+
+        if (state.stage === 'processing') {
+            await processScouting();
+
+            setWorkflowState({ ...state, stage: 'removing' });
+            await triggerRemoveFlow();
+            return;
+        }
+
+        if (state.stage === 'removing') {
+            if (!isInTeam()) {
+                clearWorkflowState();
+                showToast('Scouting abgeschlossen');
+                return;
+            }
+
+            await triggerRemoveFlow();
+        }
+
+    } catch (err) {
+        clearWorkflowState();
+        alert('Scouting-Workflow abgebrochen: ' + (err.message || err));
+    }
+}
 
     async function copyTextToClipboard(value) { try { GM_setClipboard(value); } catch { await navigator.clipboard.writeText(value); } }
 
@@ -604,6 +1237,9 @@ async function fetchMainLastUpdate(playerName, playerAge, playerLink, countryNam
 
     function getManagerNameFromRecipientField(value) { const recipient = text(value); if (!recipient) return ''; if (!/@/.test(recipient)) return recipient; const displayName = recipient.match(/^\"?([^\"<]+?)\"?\s*<[^>]+>$/); if (displayName) return text(displayName[1]); const emailName = recipient.match(/^([^@\s]+)@/); return emailName ? text(emailName[1]) : recipient; }
 
+// ========================
+// MESSAGE SYSTEM
+// ========================
     function getNewMessageLabel() {
         const lang = uiLang();
         if (lang === 'de') return 'Neue Nachricht';
@@ -651,7 +1287,42 @@ async function fetchMainLastUpdate(playerName, playerAge, playerLink, countryNam
         };
         return templates[language] || templates.DE;
     }
+   function overlayText() {
+    const lang = uiLang();
 
+    const texts = {
+        de: {
+    loading: '🏀 Spieler UI lädt ...',
+    uploading: '🏀 Upload wird verarbeitet ...',
+    selling: '💰 Sell-Benachrichtigung wird verarbeitet ...',
+    subline: 'Spielererkennung, Ranking & Upload werden verarbeitet',
+    rankingInfo: '⏳ Ranking wird im Hintergrund neu berechnet und in den nächsten Minuten aktualisiert.'
+},
+        en: {
+    loading: '🏀 Loading player UI ...',
+    uploading: '🏀 Processing upload ...',
+    selling: '💰 Processing sale notification ...',
+    subline: 'Player detection, ranking & upload are being processed',
+    rankingInfo: '⏳ Ranking is recalculated in the background and will update in the next minutes.'
+},
+        fr: {
+    loading: '🏀 Chargement de l’interface joueur ...',
+    uploading: '🏀 Traitement de l’upload ...',
+    selling: '💰 Traitement de la notification de vente ...',
+    subline: 'Détection du joueur, classement et upload en cours',
+    rankingInfo: '⏳ Le classement est recalculé en arrière-plan et sera mis à jour dans les prochaines minutes.'
+},
+        it: {
+    loading: '🏀 Caricamento interfaccia giocatore ...',
+    uploading: '🏀 Elaborazione upload ...',
+    selling: '💰 Elaborazione notifica vendita ...',
+    subline: 'Rilevamento giocatore, ranking e upload in elaborazione',
+    rankingInfo: '⏳ Il ranking viene ricalcolato in background e sarà aggiornato nei prossimi minuti.'
+}
+    };
+
+    return texts[lang] || texts.en;
+}
     function getTemplateMessage(templateKey, language, playerName, managerName) {
         if (templateKey === 'NEW') return '';
         if (templateKey === 'Discord') return getDiscordMessageText(language, managerName);
@@ -707,6 +1378,9 @@ async function fetchMainLastUpdate(playerName, playerAge, playerLink, countryNam
         } catch (err) { alert('Text konnte nicht vorbereitet werden: ' + (err.message || err)); }
     }
 
+// ========================
+// TRAINING SYSTEM
+// ========================
     function parseTrainingTarget(targetText) {
         const value = String(targetText || '').trim();
         const keys = Object.keys(TRAINING_TARGET_ALIASES).sort((a, b) => b.length - a.length);
@@ -740,12 +1414,52 @@ async function fetchMainLastUpdate(playerName, playerAge, playerLink, countryNam
         }
         return html;
     }
+    function attachTrainingProfileDropdownHandler() {
+    const select = document.getElementById('bb-training-profile-select');
+    if (!select || select.dataset.ready === '1') return;
+
+    select.dataset.ready = '1';
+
+    select.addEventListener('change', async () => {
+        const selectedProfile = select.value;
+        const wrap = document.getElementById('bb-training-plan-content');
+
+        try {
+            select.disabled = true;
+
+            if (wrap) {
+                wrap.style.opacity = '0.55';
+            }
+
+            const trainingData = await fetchTrainingPlanByProfile(selectedProfile);
+
+            TRAINING_CACHE = trainingData;
+
+            renderTrainingPlan(trainingData, SCOUT_CACHE);
+
+            // Wichtig:
+            // Keine Notifications neu laden.
+            // Kein Sheet-Write.
+            // Kein Ranking/LastUpdate Refresh.
+
+        } catch (err) {
+            showToast('Trainingsprofil konnte nicht geladen werden: ' + (err.message || err), true);
+        } finally {
+            const newSelect = document.getElementById('bb-training-profile-select');
+            if (newSelect) newSelect.disabled = false;
+
+            const newWrap = document.getElementById('bb-training-plan-content');
+            if (newWrap) newWrap.style.opacity = '1';
+        }
+    });
+}
 
     function renderTrainingPlan(trainingData, scoutData = null) {
         const wrap = document.getElementById('bb-training-plan-content');
         if (!wrap) return;
         const tr = trainingText();
         const profile = text(trainingData.profile);
+        const suggestedProfile = text(SUGGESTED_PROFILE_CACHE || profile);
         const message = text(trainingData.message);
         const targets = Array.isArray(trainingData.targets) ? trainingData.targets : [];
         const currentSkills = getCurrentSkillMap();
@@ -763,7 +1477,66 @@ async function fetchMainLastUpdate(playerName, playerAge, playerLink, countryNam
         const doneTargets = countableTargets.filter(t => t.status === 'done');
         const progressPercent = countableTargets.length ? Math.round((doneTargets.length / countableTargets.length) * 100) : 0;
 
-        let html = `<div style="font-size:11px;line-height:1.45;color:#666;"><div style="margin-bottom:8px;"><b>${tr.profile}:</b> ${escapeHtml(profile)} ${scoutHtml}</div><div style="margin-bottom:4px;font-weight:bold;">${tr.progress}: ${doneTargets.length}/${countableTargets.length} ${tr.goalsDone} (${progressPercent}%)</div><div style="margin-bottom:10px;">${buildProgressBar(progressPercent)}</div>`;
+       const profileOptions = Array.isArray(TRAINING_PROFILES_CACHE)
+    ? TRAINING_PROFILES_CACHE
+    : [];
+
+const dropdownHtml = profileOptions.length
+    ? `
+        <div style="
+            margin-top:6px;
+            display:flex;
+            align-items:center;
+            gap:8px;
+        ">
+            <select id="bb-training-profile-select"
+                title="Anderes Spielerprofil nur probeweise auswählen – es wird nichts im Sheet gespeichert"
+                style="
+                    width:155px;
+                    max-width:155px;
+                    padding:4px 5px;
+                    border:1px solid #ccc;
+                    border-radius:4px;
+                    font-size:11px;
+                    background:#fff;
+                    color:#333;
+                ">
+                ${profileOptions.map(p => `
+                    <option value="${escapeHtml(p)}" ${p === profile ? 'selected' : ''}>
+                        ${escapeHtml(p)}
+                    </option>
+                `).join('')}
+            </select>
+
+            <span style="
+                color:#888;
+                font-size:10px;
+                line-height:1.25;
+            ">
+                ${tr.loadOtherProfile}
+            </span>
+        </div>
+    `
+    : '';
+
+let html = `
+    <div style="font-size:11px;line-height:1.45;color:#666;">
+        <div style="margin-bottom:8px;">
+            <div style="margin-bottom:4px;">
+   <b>${tr.suggestedProfile}:</b>
+${escapeHtml(suggestedProfile)}
+    ${scoutHtml}
+</div>
+
+${dropdownHtml}
+        </div>
+        <div style="margin-bottom:4px;font-weight:bold;">
+            ${tr.progress}: ${doneTargets.length}/${countableTargets.length} ${tr.goalsDone} (${progressPercent}%)
+        </div>
+        <div style="margin-bottom:10px;">
+            ${buildProgressBar(progressPercent)}
+        </div>
+`;
 
         if (evaluatedTargets.length) {
             html += `<div style="font-weight:bold;margin-bottom:6px;">${tr.goals}:</div><div style="display:flex;flex-direction:column;gap:5px;margin-bottom:10px;">`;
@@ -785,9 +1558,16 @@ async function fetchMainLastUpdate(playerName, playerAge, playerLink, countryNam
         if (message && evaluatedTargets.length === 0) html += `<div style="margin-top:8px;">${escapeHtml(message)}</div>`;
         html += `</div>`;
         wrap.innerHTML = html;
-        setTimeout(positionNotificationBox, 50);
+attachTrainingProfileDropdownHandler();
+setTimeout(() => {
+    syncMainAndTrainingContentHeight();
+    positionNotificationBox();
+}, 50);
     }
 
+// ========================
+// UI
+// ========================
     function getRoleTitle() {
         const flag = getCountryFlagHtml() || '';
         if (CURRENT_ROLE === 'scout') return `${flag} <span style="margin-left:4px;">U21 Scout Tools</span>`;
@@ -831,70 +1611,439 @@ async function fetchMainLastUpdate(playerName, playerAge, playerLink, countryNam
         return select;
     }
 
-    function createShell() {
-        const existing = document.getElementById('bb-u21-combined-shell');
-        if (existing) return existing;
-        const rightColumn = document.getElementById('rightColumn');
-        if (!rightColumn) return null;
-        const shell = document.createElement('div');
-        shell.id = 'bb-u21-combined-shell';
-        Object.assign(shell.style, { position: 'relative', marginTop: '12px', width: '100%', boxSizing: 'border-box', overflow: 'visible' });
-        const anchor = document.getElementById('cbBuddyList');
-        if (anchor && anchor.parentNode === rightColumn) rightColumn.insertBefore(shell, anchor.nextSibling);
-        else rightColumn.appendChild(shell);
-        return shell;
+  function createShell() {
+    const existing = document.getElementById('bb-u21-combined-shell');
+    if (existing) return existing;
+
+    const rightColumn = document.getElementById('rightColumn');
+    if (!rightColumn) return null;
+
+    const shell = document.createElement('div');
+    shell.id = 'bb-u21-combined-shell';
+
+    Object.assign(shell.style, {
+        position: 'relative',
+        marginTop: '12px',
+        width: '100%',
+        boxSizing: 'border-box',
+        overflow: 'visible'
+    });
+
+    const content = document.createElement('div');
+    content.id = 'bb-u21-content';
+
+    Object.assign(content.style, {
+        position: 'relative',
+        width: '100%',
+        boxSizing: 'border-box',
+        overflow: 'visible'
+    });
+
+    shell.appendChild(content);
+
+    const anchor = document.getElementById('cbBuddyList');
+
+    if (anchor && anchor.parentNode === rightColumn) {
+        rightColumn.insertBefore(shell, anchor.nextSibling);
+    } else {
+        rightColumn.appendChild(shell);
     }
 
+    return shell;
+}
+    function applyU21OuterBoxStyle(box, extraStyles = {}) {
+    Object.assign(box.style, {
+        border: '1px solid #d98c8c',
+        background: '#f9e3e3',
+        borderRadius: '8px',
+        padding: '8px',
+        boxShadow: '0 2px 6px rgba(0,0,0,0.08)',
+        boxSizing: 'border-box',
+        overflow: 'visible',
+        ...extraStyles
+    });
+}
+
+function appendToU21Content(box) {
+    const content = document.getElementById('bb-u21-content');
+    if (content) content.appendChild(box);
+}
     function createMainBox(shell) {
-        const existing = document.getElementById('bb-u21-combined-box');
-        if (existing) return existing;
-        const box = document.createElement('div');
-        box.id = 'bb-u21-combined-box';
-        box.className = 'noclass';
-        box.style.width = '100%';
-        box.style.boxSizing = 'border-box';
-        box.innerHTML = `<div class="boxheader" style="display:flex;align-items:center;gap:6px;width:100%;box-sizing:border-box;padding:6px 8px;"><span style="display:flex;align-items:center;">${getRoleTitle()}</span></div><div class="boxcontent" style="padding:10px;width:100%;box-sizing:border-box;"><div id="bb-u21-player-info" style="font-size:11px;color:#666;line-height:1.45;margin-bottom:10px;"></div><div id="bb-u21-upload-section"></div><div id="bb-u21-admin-section"></div><div id="bb-u21-message-section"></div></div>`;
-        shell.appendChild(box);
-        return box;
+    const existing = document.getElementById('bb-u21-combined-box');
+    if (existing) return existing;
+
+    const box = document.createElement('div');
+    box.id = 'bb-u21-combined-box';
+    box.className = 'noclass';
+
+    applyU21OuterBoxStyle(box, {
+        width: '100%',
+        marginTop: '0'
+    });
+
+    box.innerHTML = `
+        <div class="boxheader" style="display:flex;align-items:center;gap:6px;width:100%;box-sizing:border-box;padding:6px 8px;">
+            <span style="display:flex;align-items:center;">
+                ${getCountryFlagHtml()}
+                <span style="margin-left:4px;">
+    ${uploadText('playerRecognition')}
+</span>
+            </span>
+        </div>
+
+        <div class="boxcontent" style="padding:10px;width:100%;box-sizing:border-box;background:#fff;border-radius:6px;">
+            <div id="bb-u21-player-info" style="font-size:11px;color:#666;line-height:1.45;margin-bottom:10px;"></div>
+            <div id="bb-u21-upload-section"></div>
+        </div>
+    `;
+
+    appendToU21Content(box);
+    return box;
+}
+   function createToolsBox(shell) {
+    if (
+        !FEATURES.scoutingWorkflow &&
+        !FEATURES.exportOtherCountries &&
+        !FEATURES.messages
+    ) {
+        return null;
     }
 
-    function createTrainingBox(shell) {
-        if (!FEATURES.trainingSuggestion) return null;
-        const existing = document.getElementById('bb-training-plan-box');
-        if (existing) return existing;
-        const tr = trainingText();
-        const box = document.createElement('div');
-        box.id = 'bb-training-plan-box';
-        box.className = 'noclass';
-        Object.assign(box.style, { position: 'absolute', left: 'calc(100% + 12px)', top: '0', width: CONFIG.trainingPanelWidth + 'px', boxSizing: 'border-box' });
-        box.innerHTML = `<div class="boxheader" style="display:flex;align-items:center;gap:6px;width:100%;box-sizing:border-box;padding:6px 8px;"><span style="font-size:15px;">📋</span><span>${tr.title}</span></div><div class="boxcontent" style="padding:12px;width:100%;box-sizing:border-box;font-size:11px;line-height:1.45;color:#666;"><div id="bb-training-plan-content">${tr.loading}</div></div>`;
-        shell.appendChild(box);
-        return box;
+    const existing = document.getElementById('bb-u21-tools-box');
+    if (existing) return existing;
+
+    const box = document.createElement('div');
+    box.id = 'bb-u21-tools-box';
+    box.className = 'noclass';
+
+    applyU21OuterBoxStyle(box, {
+        width: '100%',
+        marginTop: '10px'
+    });
+
+    box.innerHTML = `
+        <div class="boxheader"
+             style="display:flex;align-items:center;gap:6px;width:100%;box-sizing:border-box;padding:6px 8px;cursor:move;">
+            <span style="white-space:nowrap;">🔎 Admin Tools</span>
+
+            <button id="bb-u21-tools-reset"
+                    type="button"
+                    style="margin-left:auto;font-size:10px;padding:1px 5px;cursor:pointer;">
+                Reset
+            </button>
+        </div>
+
+        <div class="boxcontent"
+             style="padding:10px;width:100%;box-sizing:border-box;background:#fff;border-radius:6px;">
+            <div id="bb-u21-admin-section"></div>
+            <div id="bb-u21-message-section"></div>
+            ${createPanelToggleRow()}
+        </div>
+    `;
+
+    appendToU21Content(box);
+    return box;
+}
+    function enableToolsBoxDrag() {
+    const box = document.getElementById('bb-u21-tools-box');
+
+    if (!box || box.dataset.dragReady === '1') return;
+
+    box.dataset.dragReady = '1';
+
+    const header = box.querySelector('.boxheader');
+    const resetBtn = document.getElementById('bb-u21-tools-reset');
+
+    if (!header) return;
+
+    function keepToolsBoxFrame() {
+        box.style.border = '1px solid #d98c8c';
+        box.style.background = '#f9e3e3';
+        box.style.borderRadius = '8px';
+        box.style.padding = '8px';
+        box.style.boxShadow = '0 2px 6px rgba(0,0,0,0.08)';
+        box.style.boxSizing = 'border-box';
+        box.style.overflow = 'visible';
     }
+
+    header.style.cursor = 'move';
+    keepToolsBoxFrame();
+
+    if (resetBtn) {
+        resetBtn.addEventListener('click', e => {
+            e.stopPropagation();
+            resetToolsBoxPosition();
+        });
+    }
+
+    const saved = localStorage.getItem(CONFIG.toolsBoxPositionKey);
+
+    if (saved) {
+        try {
+            const pos = JSON.parse(saved);
+
+            document.body.appendChild(box);
+
+            box.style.position = 'absolute';
+            box.style.left = pos.left + 'px';
+            box.style.top = pos.top + 'px';
+            box.style.width = pos.width + 'px';
+            box.style.zIndex = '99999';
+
+            keepToolsBoxFrame();
+        } catch {}
+    }
+
+    let dragging = false;
+    let startX = 0;
+    let startY = 0;
+    let startLeft = 0;
+    let startTop = 0;
+
+    header.addEventListener('mousedown', e => {
+        if (e.target.closest('button')) return;
+
+        dragging = true;
+
+        const rect = box.getBoundingClientRect();
+
+        startX = e.clientX;
+        startY = e.clientY;
+        startLeft = rect.left + window.scrollX;
+        startTop = rect.top + window.scrollY;
+
+        document.body.appendChild(box);
+
+        box.style.position = 'absolute';
+        box.style.left = startLeft + 'px';
+        box.style.top = startTop + 'px';
+        box.style.width = rect.width + 'px';
+        box.style.zIndex = '99999';
+
+        keepToolsBoxFrame();
+
+        e.preventDefault();
+    });
+
+    document.addEventListener('mousemove', e => {
+        if (!dragging) return;
+
+        const left = startLeft + (e.clientX - startX);
+        const top = startTop + (e.clientY - startY);
+
+        box.style.left = left + 'px';
+        box.style.top = top + 'px';
+    });
+
+    document.addEventListener('mouseup', () => {
+        if (!dragging) return;
+
+        dragging = false;
+
+        const rect = box.getBoundingClientRect();
+
+        localStorage.setItem(CONFIG.toolsBoxPositionKey, JSON.stringify({
+            left: rect.left + window.scrollX,
+            top: rect.top + window.scrollY,
+            width: rect.width
+        }));
+
+        keepToolsBoxFrame();
+    });
+}
+function resetToolsBoxPosition() {
+    localStorage.removeItem(CONFIG.toolsBoxPositionKey);
+    window.location.reload();
+}
+    function attachPanelToggleHandlers() {
+    const infoToggle = document.getElementById('bb-toggle-info-box');
+    const trainingToggle = document.getElementById('bb-toggle-training-box');
+
+    if (infoToggle && infoToggle.dataset.ready !== '1') {
+        infoToggle.dataset.ready = '1';
+        infoToggle.addEventListener('change', () => {
+            setPanelHidden(CONFIG.hideInfoBoxKey, infoToggle.checked);
+            applyPanelVisibility();
+        });
+    }
+
+    if (trainingToggle && trainingToggle.dataset.ready !== '1') {
+        trainingToggle.dataset.ready = '1';
+        trainingToggle.addEventListener('change', () => {
+            setPanelHidden(CONFIG.hideTrainingBoxKey, trainingToggle.checked);
+            applyPanelVisibility();
+        });
+    }
+}
+    function applyPanelVisibility() {
+    const infoBox = document.getElementById('bb-notification-box');
+    const trainingBox = document.getElementById('bb-training-plan-box');
+    const rightBg = document.getElementById('bb-u21-right-bg');
+
+    const hideInfo = isPanelHidden(CONFIG.hideInfoBoxKey);
+    const hideTraining = isPanelHidden(CONFIG.hideTrainingBoxKey);
+
+    if (infoBox) infoBox.style.display = hideInfo ? 'none' : '';
+    if (trainingBox) trainingBox.style.display = hideTraining ? 'none' : '';
+
+    if (rightBg) {
+        rightBg.style.display = hideInfo && hideTraining ? 'none' : '';
+    }
+
+    setTimeout(positionNotificationBox, 50);
+}
+    function createTrainingBox(shell) {
+    if (!FEATURES.trainingSuggestion) return null;
+
+    const existing = document.getElementById('bb-training-plan-box');
+    if (existing) return existing;
+
+    const tr = trainingText();
+
+    const box = document.createElement('div');
+    box.id = 'bb-training-plan-box';
+    box.className = 'noclass';
+
+    applyU21OuterBoxStyle(box, {
+        position: 'absolute',
+        left: 'calc(100% + 12px)',
+        top: '8px',
+        width: CONFIG.trainingPanelWidth + 16 + 'px',
+        zIndex: '2'
+    });
+
+    box.innerHTML = `
+        <div class="boxheader" style="display:flex;align-items:center;gap:6px;width:100%;box-sizing:border-box;padding:6px 8px;">
+            <span style="font-size:15px;">📋</span>
+            <span>${tr.title}</span>
+        </div>
+
+        <div class="boxcontent" style="padding:12px;width:100%;box-sizing:border-box;font-size:11px;line-height:1.45;color:#666;background:#fff;border-radius:6px;">
+            <div id="bb-training-plan-content">${tr.loading}</div>
+        </div>
+    `;
+
+    appendToU21Content(box);
+    return box;
+}
+    function createPanelToggleRow() {
+    if (CURRENT_ROLE !== 'admin' && CURRENT_ROLE !== 'scout') return '';
+
+    const infoChecked = isPanelHidden(CONFIG.hideInfoBoxKey) ? 'checked' : '';
+    const trainingChecked = isPanelHidden(CONFIG.hideTrainingBoxKey) ? 'checked' : '';
+
+    return `
+        <div style="margin-top:10px;padding-top:8px;border-top:1px solid #ddd;font-size:11px;color:#666;line-height:1.6;">
+            <label style="display:block;cursor:pointer;">
+                <input id="bb-toggle-info-box" type="checkbox" ${infoChecked}>
+                ${uploadText('hideInfos')}
+            </label>
+            <label style="display:block;cursor:pointer;">
+                <input id="bb-toggle-training-box" type="checkbox" ${trainingChecked}>
+                ${uploadText('hideTraining')}
+            </label>
+        </div>
+    `;
+}
 
     function createNotificationBox(shell) {
-        const existing = document.getElementById('bb-notification-box');
-        if (existing) return existing;
-        const trainingBox = document.getElementById('bb-training-plan-box');
-        const box = document.createElement('div');
-        box.id = 'bb-notification-box';
-        box.className = 'noclass';
-        Object.assign(box.style, { position: 'absolute', left: 'calc(100% + 12px)', top: '0', width: CONFIG.trainingPanelWidth + 'px', boxSizing: 'border-box', marginTop: '10px' });
-        box.innerHTML = `<div class="boxheader" style="display:flex;align-items:center;gap:6px;width:100%;box-sizing:border-box;padding:6px 8px;"><span>⚠️ ${uploadText('notificationTitle')}</span></div><div class="boxcontent" style="padding:10px;font-size:11px;color:#666;line-height:1.35;width:100%;box-sizing:border-box;"><div id="bb-notification-content">${uploadText('notificationLoading')}</div></div>`;
-        if (trainingBox) trainingBox.insertAdjacentElement('afterend', box);
-        else shell.appendChild(box);
-        positionNotificationBox();
-        return box;
-    }
+    const existing = document.getElementById('bb-notification-box');
+    if (existing) return existing;
 
-    function positionNotificationBox() {
-        const trainingBox = document.getElementById('bb-training-plan-box');
-        const notificationBox = document.getElementById('bb-notification-box');
-        if (!trainingBox || !notificationBox) return;
-        const trainingHeight = trainingBox.offsetHeight || 0;
-        notificationBox.style.top = `${trainingHeight + 6}px`;
-    }
+    const box = document.createElement('div');
+    box.id = 'bb-notification-box';
+    box.className = 'noclass';
 
+    applyU21OuterBoxStyle(box, {
+        position: 'absolute',
+        left: 'calc(100% + 12px)',
+        top: '0',
+        width: CONFIG.trainingPanelWidth + 16 + 'px',
+        zIndex: '2'
+    });
+
+    box.innerHTML = `
+    <div style="
+        position:absolute;
+        top:-15px;
+        left:10px;
+        background:#c62828;
+        color:white;
+        padding:3px 8px;
+        border-radius:5px;
+        font-size:12px;
+        font-weight:bold;
+        border:1px solid #8e0000;
+        box-shadow:0 1px 3px rgba(0,0,0,0.25);
+        z-index:5;
+    ">
+        ${uploadText('swissU21')}
+    </div>
+
+    <div class="boxheader" style="display:flex;align-items:center;gap:6px;width:100%;box-sizing:border-box;padding:6px 8px;">
+        <span>⚠️ Infos U21</span>
+    </div>
+
+        <div class="boxcontent" style="padding:4px 10px 10px 10px;font-size:11px;color:#666;line-height:1.35;width:100%;box-sizing:border-box;background:#fff;border-radius:6px;">
+            <div id="bb-notification-content">${uploadText('notificationLoading')}</div>
+        </div>
+    `;
+
+    appendToU21Content(box);
+    box.style.zIndex = '2';
+
+    positionNotificationBox();
+    return box;
+}
+
+ function positionNotificationBox() {
+    const mainBox = document.getElementById('bb-u21-combined-box');
+    const trainingBox = document.getElementById('bb-training-plan-box');
+    const notificationBox = document.getElementById('bb-notification-box');
+
+    if (!mainBox || !trainingBox || !notificationBox) return;
+
+    const gap = 10;
+
+    const mainTop = mainBox.offsetTop;
+    const mainHeight = mainBox.offsetHeight || 0;
+    const notificationHeight = notificationBox.offsetHeight || 0;
+
+    // Infos über Trainingsbox
+    notificationBox.style.left = 'calc(100% + 12px)';
+    notificationBox.style.top = `${mainTop - notificationHeight - gap}px`;
+
+    // Training exakt bündig mit Spielererkennung
+    trainingBox.style.left = 'calc(100% + 12px)';
+    trainingBox.style.top = `${mainTop}px`;
+
+    syncMainAndTrainingContentHeight();
+}
+    function syncMainAndTrainingContentHeight() {
+    const mainBox = document.getElementById('bb-u21-combined-box');
+    const trainingBox = document.getElementById('bb-training-plan-box');
+
+    if (!mainBox || !trainingBox) return;
+
+    const mainContent = mainBox.querySelector('.boxcontent');
+    const trainingContent = trainingBox.querySelector('.boxcontent');
+
+    if (!mainContent || !trainingContent) return;
+
+    mainContent.style.minHeight = '';
+    trainingContent.style.minHeight = '';
+
+    const mainExtra = mainBox.offsetHeight - mainContent.offsetHeight;
+    const trainingExtra = trainingBox.offsetHeight - trainingContent.offsetHeight;
+
+    const targetOuterHeight = Math.max(
+        mainBox.offsetHeight,
+        trainingBox.offsetHeight
+    );
+
+    mainContent.style.minHeight = `${Math.max(0, targetOuterHeight - mainExtra)}px`;
+    trainingContent.style.minHeight = `${Math.max(0, targetOuterHeight - trainingExtra)}px`;
+}
     function renderNotificationBox(infos) {
         const wrap = document.getElementById('bb-notification-content');
         if (!wrap) return;
@@ -905,7 +2054,7 @@ async function fetchMainLastUpdate(playerName, playerAge, playerLink, countryNam
         wrap.innerHTML = infos.map(item => {
             const text = escapeHtml(item.text || item);
             const isTitle = item.bold === true;
-            if (isTitle) return `<div style="font-weight:bold;margin-top:12px;margin-bottom:4px;color:#333;">${text}</div>`;
+            if (isTitle) return `<div style="font-weight:bold;margin-top:2px;margin-bottom:4px;color:#333;">${text}</div>`;
             return `<div style="margin-bottom:3px;">• ${text}</div>`;
         }).join('');
         setTimeout(positionNotificationBox, 50);
@@ -1016,13 +2165,19 @@ async function fetchMainLastUpdate(playerName, playerAge, playerLink, countryNam
         const shell = createShell();
         if (!shell) return;
         const box = createMainBox(shell);
-        createTrainingBox(shell);
-        createNotificationBox(shell);
+const toolsBox = createToolsBox(shell);
+
+window.bbResetToolsBoxPosition = resetToolsBoxPosition;
+enableToolsBoxDrag();
+
+createTrainingBox(shell);
+createNotificationBox(shell);
 
         const infoWrap = box.querySelector('#bb-u21-player-info');
-        const uploadSection = box.querySelector('#bb-u21-upload-section');
-        const adminSection = box.querySelector('#bb-u21-admin-section');
-        const messageSection = box.querySelector('#bb-u21-message-section');
+const uploadSection = box.querySelector('#bb-u21-upload-section');
+
+const adminSection = toolsBox?.querySelector('#bb-u21-admin-section');
+const messageSection = toolsBox?.querySelector('#bb-u21-message-section');
         if (!infoWrap || infoWrap.dataset.ready === '1') return;
 
         const playerName = getPlayerName() || uploadText('unknownPlayer');
@@ -1037,31 +2192,78 @@ async function fetchMainLastUpdate(playerName, playerAge, playerLink, countryNam
         infoWrap.innerHTML = `<div>${uploadText('playerDetected')}</div><div><b>${escapeHtml(playerName)}</b> &nbsp;|&nbsp; ${escapeHtml(age)}</div><div style="margin-bottom:4px;"><b>${escapeHtml(country)}</b>${getCountryFlagHtml()}</div>${FEATURES.managerLanguage ? `<div id="bb-manager-language-line" style="margin-bottom:6px;">${uploadText('languageLoading')}</div>` : ''}${FEATURES.lastUpdate ? `<div id="bb-main-last-update">${uploadText('lastUpdateLoading')}</div>` : ''}${!skillsVisible ? `<div style="margin-top:6px;color:#888;font-weight:600;">${uploadText('noSkills')}</div>` : ''}${!eligible && (FEATURES.upload || FEATURES.trainingSuggestion) ? `<div style="margin-top:8px;color:#c62828;font-weight:bold;">${uploadText('onlySwiss')}</div>` : ''}`;
         infoWrap.dataset.ready = '1';
 
-        if (FEATURES.upload || FEATURES.scoutInfo) {
-            const section = addSection(uploadSection, '📤 Upload');
-            const actions = document.createElement('div');
-            actions.style.display = 'flex';
-            actions.style.flexDirection = 'column';
-            actions.style.gap = '8px';
-            section.appendChild(actions);
+       if (FEATURES.upload || FEATURES.scoutInfo) {
+    const section = addSection(uploadSection, '📤 Upload');
 
-            if (FEATURES.upload) {
-                actions.appendChild(createButton({ text: uploadText('uploadButton'), color: '#1565c0', onClick: uploadToDatabase, disabled: !eligible || !skillsVisible, title: !skillsVisible ? uploadText('noSkills') : eligible ? uploadText('uploadButton') : uploadText('uploadOnlySwiss') }));
-                actions.appendChild(createButton({ text: `💰 ${uploadText('sellButton')}`, color: '#1b5e20', textColor: '#1b5e20', onClick: sendSellNotification, disabled: !eligible || !skillsVisible || !auctionEnds, title: !eligible ? uploadText('sellOnlySwissU21') : !skillsVisible ? uploadText('noSkills') : !auctionEnds ? uploadText('sellNoAuction') : uploadText('sellTitle') }));
-            }
-        }
+    const actions = document.createElement('div');
+    actions.style.display = 'flex';
+    actions.style.flexDirection = 'column';
+    actions.style.gap = '8px';
+    section.appendChild(actions);
 
-        if (FEATURES.exportOtherCountries) {
-            const section = addSection(adminSection, CURRENT_ROLE === 'admin' ? '🔎 Admin Tools' : '🔎 Scout Tools');
-            const actions = document.createElement('div');
-            actions.style.display = 'flex';
-            actions.style.flexDirection = 'column';
-            actions.style.gap = '8px';
-            section.appendChild(actions);
-            actions.appendChild(createButton({ text: uploadText('exportButton'), color: '#d4a017', textColor: '#222', onClick: exportPlayer, disabled: !skillsVisible || getPlayerAgeNumber() === null || getPlayerAgeNumber() > 21, title: !skillsVisible ? uploadText('noSkills') : getPlayerAgeNumber() > 21 ? uploadText('exportOnlyU21') : uploadText('exportTitle') }));
-        }
+    if (FEATURES.upload) {
+        actions.appendChild(createButton({
+            text: uploadText('uploadButton'),
+            color: '#1565c0',
+            onClick: uploadToDatabase,
+            disabled: !eligible || !skillsVisible,
+            title: !skillsVisible
+                ? uploadText('noSkills')
+                : eligible
+                    ? uploadText('uploadButton')
+                    : uploadText('uploadOnlySwiss')
+        }));
 
-        if (FEATURES.messages) {
+        actions.appendChild(createButton({
+            text: `💰 ${uploadText('sellButton')}`,
+            color: '#1b5e20',
+            textColor: '#1b5e20',
+            onClick: sendSellNotification,
+            disabled: !eligible || !skillsVisible || !auctionEnds,
+            title: !eligible
+                ? uploadText('sellOnlySwissU21')
+                : !skillsVisible
+                    ? uploadText('noSkills')
+                    : !auctionEnds
+                        ? uploadText('sellNoAuction')
+                        : uploadText('sellTitle')
+        }));
+    }
+}
+       if (adminSection && (FEATURES.scoutingWorkflow || FEATURES.exportOtherCountries)) {
+    const actions = document.createElement('div');
+    actions.style.display = 'flex';
+    actions.style.flexDirection = 'column';
+    actions.style.gap = '8px';
+    adminSection.appendChild(actions);
+
+    if (FEATURES.scoutingWorkflow) {
+        actions.appendChild(createButton({
+            text: '🔎 Scouting Workflow',
+            color: '#c62828',
+            onClick: startScoutingWorkflow,
+            disabled: !isEligibleForSwissU21Scouting(),
+            title: 'Fügt den Spieler ins U21-Team ein, liest Skills aus, schreibt ins Sheet und entfernt ihn wieder'
+        }));
+    }
+
+    if (FEATURES.exportOtherCountries) {
+        actions.appendChild(createButton({
+            text: uploadText('exportButton'),
+            color: '#d4a017',
+            textColor: '#222',
+            onClick: exportPlayer,
+            disabled: !skillsVisible || getPlayerAgeNumber() === null || getPlayerAgeNumber() > 21,
+            title: !skillsVisible
+                ? uploadText('noSkills')
+                : getPlayerAgeNumber() > 21
+                    ? uploadText('exportOnlyU21')
+                    : uploadText('exportTitle')
+        }));
+    }
+}
+
+        if (messageSection && FEATURES.messages) {
             const section = addSection(messageSection, '✉️ Text Messages');
             const grid = document.createElement('div');
             grid.style.display = 'grid';
@@ -1072,53 +2274,98 @@ async function fetchMainLastUpdate(playerName, playerAge, playerLink, countryNam
             section.appendChild(grid);
         }
 
-        if (FEATURES.managerLanguage) {
-            fetchManagerLanguage(teamName).then(language => {
-                const line = document.getElementById('bb-manager-language-line');
-                if (line) line.innerHTML = `${uploadText('languageLabel')} <b>${escapeHtml(language || 'unknown')}</b>`;
-            });
-        }
+       // Daten parallel nachladen, damit die Sidebar sofort sichtbar bleibt
+const backgroundTasks = [];
 
-      if (FEATURES.lastUpdate) {
-    showLoadingOverlay('U21 Ranking wird geladen ...');
-
-    try {
-        await refreshMainLastUpdateLine(playerName, age, playerLink, country);
-    } finally {
-        hideLoadingOverlay();
-    }
+if (FEATURES.managerLanguage) {
+    backgroundTasks.push(
+        fetchManagerLanguage(teamName).then(language => {
+            const line = document.getElementById('bb-manager-language-line');
+            if (line) {
+                line.innerHTML = `${uploadText('languageLabel')} <b>${escapeHtml(language || 'unknown')}</b>`;
+            }
+        })
+    );
 }
 
-        if (FEATURES.trainingSuggestion) {
-            const wrap = document.getElementById('bb-training-plan-content');
-            (async () => {
-                let scoutData = null;
-                if (FEATURES.scoutInfo && eligible) scoutData = await fetchScout(playerName, age, playerLink);
-                if (!eligible) {
-                    if (wrap) wrap.innerHTML = `<div style="color:#888;">${trainingText().onlyU21}</div>`;
-                    renderNotificationBox([]);
-                    return;
-                }
-                const trainingData = await fetchTrainingPlan(playerName, age, playerLink);
-                renderTrainingPlan(trainingData, scoutData);
-                renderNotificationBox(trainingData.infos || []);
-            })();
-        }
+if (FEATURES.lastUpdate) {
+    backgroundTasks.push(
+        refreshMainLastUpdateLine(playerName, age, playerLink, country)
+    );
+}
+
+if (FEATURES.trainingSuggestion) {
+   backgroundTasks.push((async () => {
+    const wrap = document.getElementById('bb-training-plan-content');
+
+    if (!eligible) {
+        if (wrap) wrap.innerHTML = `<div style="color:#888;">${trainingText().onlyU21}</div>`;
+        renderNotificationBox([]);
+        return;
     }
 
-   async function initPlayerPage() {
+    const fullData = await fetchFullPlayerDashboard(playerName, age, playerLink);
+
+    const player = fullData.player || {};
+    const trainingData = fullData.training || {};
+
+    const scoutData = {
+        scout: player.scout || 'Brausetablette',
+        mailLink: player.mailLink || 'https://buzzerbeater.com/community/bbmail.aspx?showType=create&user=Brausetablette'
+    };
+
+    TRAINING_CACHE = trainingData;
+SUGGESTED_PROFILE_CACHE = trainingData.profile || '';
+SCOUT_CACHE = scoutData;
+
+await fetchTrainingProfiles();
+
+renderTrainingPlan(trainingData, scoutData);
+renderNotificationBox(trainingData.infos || []);
+})());
+}
+
+await Promise.allSettled(backgroundTasks);
+        attachPanelToggleHandlers();
+applyPanelVisibility();
+
+debugLog('Background loading finished');
+
+// Alles geladen → Overlay entfernen
+hideLoadingOverlay();
+}
+
+// ========================
+// INIT
+// ========================
+  async function initPlayerPage() {
     setTimeout(async () => {
-        await buildSidebarContent();
 
-        await loadAccess();
+        showLoadingOverlay(overlayText().loading);
 
-        const oldBox = document.getElementById('bb-u21-combined-shell');
-        if (oldBox) oldBox.remove();
+        try {
+            // Zuerst echte Rechte vom Server laden
+            await loadAccess();
 
-        await buildSidebarContent();
+            debugLog('Access loaded', CURRENT_ROLE, FEATURES);
+
+            // Danach Sidebar mit korrekten Rechten bauen
+            await buildSidebarContent();
+
+            // Workflow nur fortsetzen, wenn die Rolle es erlaubt
+            const state = getWorkflowState();
+
+            if (FEATURES.scoutingWorkflow && state?.active) {
+                await resumeScoutingWorkflow();
+            }
+
+        } catch (err) {
+            console.error(err);
+            hideLoadingOverlay();
+        }
+
     }, CONFIG.initDelayMs);
 }
-
     function initMailPage() { setTimeout(fillComposerFromStoredPayload, CONFIG.initDelayMs); }
 
     if (isPlayerPage()) {
